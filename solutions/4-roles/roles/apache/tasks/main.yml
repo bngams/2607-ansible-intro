@@ -1,0 +1,19 @@
+---
+- name: Installer les paquets web
+  ansible.builtin.apt:
+    name: "{{ apache_packages }}"
+    state: present
+    update_cache: true
+
+- name: Déployer le vhost (template)
+  ansible.builtin.template:
+    src: site.conf.j2
+    dest: /etc/apache2/sites-available/000-default.conf
+    mode: "0644"
+  notify: Recharger Apache
+
+- name: Démarrer et activer Apache
+  ansible.builtin.service:
+    name: apache2
+    state: started
+    enabled: true

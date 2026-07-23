@@ -1,0 +1,6 @@
+# Généré par Ansible — ne pas éditer à la main
+<VirtualHost *:{{ http_port }}>
+    ServerAdmin {{ admin_email }}
+    DocumentRoot /var/www/html
+    ServerName {{ site_title | lower | replace(' ', '-') }}
+</VirtualHost>

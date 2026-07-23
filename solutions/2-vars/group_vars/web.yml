@@ -1,0 +1,3 @@
+site_title: "Mon site"
+http_port: 80
+admin_email: "ops@example.com"

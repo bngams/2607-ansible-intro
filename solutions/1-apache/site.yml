@@ -1,0 +1,29 @@
+---
+# 1 — fichier + service + Apache, sur un conteneur debian:12 minimal.
+# Cible créée avant : docker run -d --name web1 debian:12 sleep infinity
+- name: Configurer le serveur web
+  hosts: web
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Bootstrap Python (image minimale, sans python → module raw)
+      ansible.builtin.raw: command -v python3 || (apt-get update -y && apt-get install -y python3)
+      changed_when: false
+
+    - name: Installer Apache
+      ansible.builtin.apt:
+        name: apache2
+        state: present
+        update_cache: true
+
+    - name: Page d'accueil
+      ansible.builtin.copy:
+        content: "<h1>Configuré par Ansible</h1>\n"
+        dest: /var/www/html/index.html
+        mode: "0644"
+
+    - name: Démarrer et activer Apache
+      ansible.builtin.service:
+        name: apache2
+        state: started
+        enabled: true

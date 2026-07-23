@@ -1,0 +1,4 @@
+---
+haproxy_listen_port: 80
+wp_backend_host: wp
+wp_backend_port: 80

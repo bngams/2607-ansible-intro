@@ -1,0 +1,8 @@
+---
+apache_packages:
+  - apache2
+  - php
+  - libapache2-mod-php
+http_port: 80
+site_title: "Mon site"
+admin_email: "ops@example.com"

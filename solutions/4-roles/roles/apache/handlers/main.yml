@@ -1,0 +1,5 @@
+---
+- name: Recharger Apache
+  ansible.builtin.service:
+    name: apache2
+    state: reloaded

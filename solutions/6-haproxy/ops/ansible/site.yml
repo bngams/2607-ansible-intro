@@ -1,0 +1,8 @@
+---
+# 6 — reverse proxy HAProxy devant WordPress. Cible : conteneur "proxy" sur wpnet.
+- name: Reverse proxy devant WordPress
+  hosts: proxy
+  become: true
+  roles:
+    - bootstrap_python
+    - haproxy

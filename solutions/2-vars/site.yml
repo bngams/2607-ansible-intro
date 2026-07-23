@@ -1,0 +1,38 @@
+---
+# 2 — variables, facts, template, handler, sur le conteneur web1 (debian:12).
+# docker run -d --name web1 debian:12 sleep infinity
+- name: Serveur web paramétré
+  hosts: web
+  gather_facts: true
+  become: true
+
+  tasks:
+    - name: Bootstrap Python si besoin
+      ansible.builtin.raw: command -v python3 || (apt-get update -y && apt-get install -y python3)
+      changed_when: false
+
+    - name: Installer les paquets web
+      ansible.builtin.apt:
+        name: "{{ item }}"
+        state: present
+        update_cache: true
+      loop: [apache2, php, libapache2-mod-php]
+
+    - name: Déployer le vhost (template)
+      ansible.builtin.template:
+        src: templates/site.conf.j2
+        dest: /etc/apache2/sites-available/000-default.conf
+        mode: "0644"
+      notify: Recharger Apache
+
+    - name: Démarrer et activer Apache
+      ansible.builtin.service:
+        name: apache2
+        state: started
+        enabled: true
+
+  handlers:
+    - name: Recharger Apache
+      ansible.builtin.service:
+        name: apache2
+        state: reloaded
