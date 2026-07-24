@@ -81,7 +81,7 @@ Commençons par **monter le décor** : les deux projets sont fournis prêts à l
 pour obtenir des **cibles réelles** (les conteneurs) et un **inventaire**. On écrira la
 configuration HAProxy **juste après**, une fois qu'on aura quelque chose à configurer.
 
-Tout est dans `solutions/6-haproxy/` :
+Tout est dans [`solutions/6-haproxy/`](https://github.com/bngams/2607-ansible-intro/tree/main/solutions/6-haproxy) :
 
 ```
 app/               # REPO 1 — DEV : la stack applicative livrée
