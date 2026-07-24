@@ -1,13 +1,5 @@
 # 0 — Ansible : installation & concepts
 
-Bienvenue au **Jour 3**. En J2, **Terraform a provisionné** l'infrastructure (les conteneurs) et
-a **écrit l'inventaire**. Aujourd'hui, **Ansible configure** ce qui a été provisionné — et on
-boucle la chaîne GitOps : *provisionner (TF) → configurer (Ansible)*.
-
-> **Le fil rouge.** On a une appli WordPress (J2). En J3, on la complète côté **ops** : on
-> déploie et configure un **reverse proxy (HAProxy)** devant, avec Ansible. Puis on assemble le
-> **capstone** : un pipeline qui provisionne **et** configure, de bout en bout.
-
 ### Ressources utiles
 
 - [Documentation Ansible](https://docs.ansible.com/ansible/latest/) ·
