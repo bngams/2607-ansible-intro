@@ -1,0 +1,17 @@
+# Playbook de demo synchronise depuis Git par AWX/Semaphore.
+# Volontairement trivial : il PROUVE que l'outil tire le repo et rejoue le playbook.
+# En vrai, ce serait le site.yml du chapitre 6 (HAProxy) ou du capstone.
+- name: Reconciliation demo (pull GitOps)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Afficher un message versionne dans Git
+      ansible.builtin.debug:
+        msg: "Etat desire applique depuis Git a {{ ansible_date_time.iso8601 | default('now') }}"
+
+    - name: Ecrire un marqueur d'execution
+      ansible.builtin.copy:
+        content: "reconcilie par le controleur GitOps\n"
+        dest: /tmp/gitops-reconcile.txt
+        mode: "0644"

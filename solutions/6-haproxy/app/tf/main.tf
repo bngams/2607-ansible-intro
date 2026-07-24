@@ -19,7 +19,12 @@ resource "docker_container" "db" {
 resource "docker_container" "wordpress" {
   name       = "wp"
   image      = docker_image.wp.image_id
-  env        = ["WORDPRESS_DB_HOST=db"]
+  env = [
+    "WORDPRESS_DB_HOST=db",
+    "WORDPRESS_DB_USER=root", # sinon WP tente root SANS mot de passe -> HTTP 500
+    "WORDPRESS_DB_PASSWORD=rootpw",
+    "WORDPRESS_DB_NAME=wordpress",
+  ]
   depends_on = [docker_container.db]
   networks_advanced { name = docker_network.wp.name }
 }

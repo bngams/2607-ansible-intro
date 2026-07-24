@@ -1,0 +1,2 @@
+# Secrets locaux : ne jamais committer le vrai .env
+.env

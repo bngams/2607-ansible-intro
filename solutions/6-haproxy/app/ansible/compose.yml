@@ -1,0 +1,23 @@
+# Meme resultat que app/tf : le reseau wpnet + db + wp.
+# Noms de conteneurs FIXES -> ils doivent matcher l'inventaire publie (cf. chapitre 5).
+services:
+  db:
+    image: mysql:8.0
+    container_name: db
+    networks: [wpnet]
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpw
+      MYSQL_DATABASE: wordpress
+  wordpress:
+    image: wordpress:latest
+    container_name: wp
+    depends_on: [db]
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_USER: root          # sinon WP tente root SANS mot de passe -> HTTP 500
+      WORDPRESS_DB_PASSWORD: rootpw
+      WORDPRESS_DB_NAME: wordpress
+    networks: [wpnet]
+networks:
+  wpnet:
+    name: wpnet        # nom FIXE : l'ops branchera son proxy sur CE reseau

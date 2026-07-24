@@ -94,12 +94,14 @@ le module `docker_compose_v2`. La philosophie est différente : on **orchestre d
 services:
   db:
     image: mysql:8.0
+    container_name: db          # nom FIXE -> doit matcher l'inventaire (comme en tf-way)
     networks: [wpnet]
     environment:
       MYSQL_ROOT_PASSWORD: rootpw
       MYSQL_DATABASE: wordpress
   wordpress:
     image: wordpress:latest
+    container_name: wp          # sinon compose nomme "<projet>-wordpress-1"
     depends_on: [db]
     ports: ["8080:80"]
     networks: [wpnet]
@@ -128,6 +130,13 @@ networks:
           [db]
           db ansible_connection=community.docker.docker
 ```
+
+> **⚠️ Piège — le nom des conteneurs.** Par défaut, Compose nomme les conteneurs
+> `<projet>-<service>-<n>` (ex. `ansible-way-wordpress-1`), alors que l'inventaire généré cible
+> `wp` et `db`. Résultat : `ansible -i inventory.ini all -m ping` renvoie **`UNREACHABLE!`** sur
+> `wp` (le conteneur n'existe pas sous ce nom).
+> **Correctif** => on fixe `container_name: wp` / `container_name: db`, ce qui reproduit exactement
+> le nommage de Terraform (`name = "wp"`) et rend les **deux voies interchangeables**.
 
 ```bash
 cd ansible-way

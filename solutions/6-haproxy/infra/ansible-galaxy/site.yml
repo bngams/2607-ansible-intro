@@ -1,0 +1,30 @@
+---
+# VARIANTE BONUS : meme resultat que le role maison, mais avec un role Galaxy.
+# On n'ecrit AUCUN template : on se contente de fournir des VARIABLES au role.
+#
+# /!\ Deux plays, et c'est le point cle :
+#   - le role Galaxy a besoin des FACTS (ansible_os_family) ;
+#   - mais les facts exigent Python, absent de l'image debian:12 minimale.
+# -> play 1 amorce Python SANS facts, play 2 active les facts pour le role.
+
+# --- PLAY 1 : amorcer Python (pas de facts, pas de become : on est deja root) ---
+- name: Amorcer Python sur le proxy
+  hosts: proxy
+  gather_facts: false
+  roles:
+    - bootstrap_python
+
+# --- PLAY 2 : le role Galaxy, avec les facts ---
+- name: Configurer HAProxy avec le role Galaxy
+  hosts: proxy
+  gather_facts: true          # indispensable : le role teste ansible_os_family
+  vars:
+    haproxy_frontend_name: http_in
+    haproxy_frontend_port: 80
+    haproxy_backend_name: wordpress_app
+    haproxy_backend_balance_method: roundrobin
+    haproxy_backend_servers:
+      - name: wp1
+        address: wp:80        # le conteneur WordPress, resolu sur le reseau wpnet
+  roles:
+    - geerlingguy.haproxy

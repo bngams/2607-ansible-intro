@@ -1,0 +1,14 @@
+# Voie ANSIBLE du provisioning INFRA (equivalent de infra/tf).
+# Deploie NOTRE conteneur proxy, sur le reseau wpnet cree par le projet app/.
+services:
+  proxy:
+    image: debian:12
+    container_name: proxy       # nom FIXE -> doit matcher l'inventaire
+    command: ["sleep", "infinity"]
+    ports:
+      - "8088:80"               # l'edge de l'ops
+    networks: [wpnet]
+
+networks:
+  wpnet:
+    external: true              # /!\ reseau EXISTANT, cree par le projet app/

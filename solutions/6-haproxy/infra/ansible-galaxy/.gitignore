@@ -1,0 +1,2 @@
+# Roles telecharges par ansible-galaxy : on versionne requirements.yml, PAS les roles.
+roles/geerlingguy.*

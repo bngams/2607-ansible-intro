@@ -15,10 +15,15 @@ l'entrée unique qui route le trafic vers l'application. Et on le **configure**,
 On se met dans une situation **réaliste** :
 
 - L'**équipe dev** a livré des **conteneurs à déployer** (l'app WordPress + sa base) — c'est le
-  dossier **`ressources/`**, qui publie aussi l'**inventaire des backends**.
-- L'**équipe ops** (vous) possède **son propre projet/infra** : **son** reverse proxy HAProxy.
-  Vous le **déployez** (Terraform) **et** le **configurez** (Ansible) en **récupérant les infos
-  de l'inventaire** publié par dev.
+  projet **`app/`**, qui publie aussi l'**inventaire des backends**.
+- L'**équipe ops** (vous) possède **son propre projet** : le projet **`infra/`**, avec **son**
+  reverse proxy HAProxy. Vous le **déployez** (Terraform) **et** le **configurez** (Ansible) en
+  **récupérant les infos de l'inventaire** publié par dev.
+
+> **Imaginez deux dépôts Git séparés.** `app/` et `infra/` ne sont pas deux sous-dossiers d'un même
+> projet : ce sont **deux repos distincts**, avec **deux équipes**, **deux cycles de vie** et
+> **deux droits d'accès**. Ici on les met côte à côte uniquement pour que le TP tienne dans un
+> seul dossier. Le seul **contrat** entre eux = l'**inventaire des backends** publié par `app/`.
 
 C'est le **workflow GitOps** classique : deux flux distincts (dev *et* ops), chacun avec **son
 repo**, qui convergent vers l'environnement déployé.
@@ -38,10 +43,10 @@ pour notre lab :
 
 ```mermaid
 flowchart LR
-    subgraph DEV["Projet DEV (ressources/)"]
-        WP["conteneurs wp + db"] --> INV["inventaire des backends"]
+    subgraph DEV["Repo APP (app/) — équipe dev"]
+        WP["conteneurs wp + db<br/>(tf/ ou ansible/)"] --> INV["inventaire des backends"]
     end
-    subgraph OPS["Projet OPS (ops/)"]
+    subgraph OPS["Repo INFRA (infra/) — équipe ops"]
         TF["TF : déploie HAProxy"] --> CFG["Ansible : configure HAProxy"]
     end
     INV -. handoff .-> CFG
@@ -178,42 +183,80 @@ wp_backend_port: 80
 Tout est dans `solutions/6-haproxy/` :
 
 ```
-ressources/        # DEV : la stack applicative livrée
-  └─ *.tf          → wpnet + db + wp, et publie inventory-backends.ini
-ops/               # OPS : votre projet
-  ├─ tf/           → déploie VOTRE conteneur HAProxy (sur wpnet, :8088)
-  └─ ansible/      → rôle haproxy + playbook + inventory (backends + proxy)
+app/               # REPO 1 — DEV : la stack applicative livrée
+  ├─ tf/           -> wpnet + db + wp, et publie inventory-backends.ini
+  └─ ansible/      -> MEME résultat en Ansible (compose.yml + up.yml) — au choix
+infra/             # REPO 2 — OPS : votre projet
+  ├─ tf/           -> déploie VOTRE conteneur HAProxy (sur wpnet, :8088)
+  ├─ ansible/      -> MEME provisioning en Ansible (compose.yml + up.yml)
+  │                   + rôle haproxy maison + site.yml + inventory
+  └─ ansible-galaxy/ -> BONUS : le même résultat avec un rôle Galaxy
 ```
 
-### Etape 1 — DEV : la stack applicative
+> **Pourquoi `tf/` ET `ansible/` dans `app/` ?** Comme au [chapitre 5](5-TERRAFORM-VS-ANSIBLE.md),
+> **les deux voies produisent le même résultat** (mêmes conteneurs `db`/`wp`, même réseau `wpnet`,
+> même inventaire publié). On met Terraform en avant pour le provisioning, mais si vous travaillez
+> plutôt côté Ansible, **prenez `app/ansible/`** — la suite du chapitre est identique. C'est le
+> **contrat de sortie** (l'inventaire des backends) qui compte, pas l'outil qui l'a produit.
+
+### Etape 1 — DEV (repo `app/`) : la stack applicative
+
+Au choix, **une** des deux voies — le résultat est le même :
 
 ```bash
-cd solutions/6-haproxy/ressources
+# Voie Terraform
+cd solutions/6-haproxy/app/tf
 terraform init && terraform apply -auto-approve     # crée db + wp, écrit inventory-backends.ini
 cat inventory-backends.ini                          # l'inventaire des backends, publié pour l'ops
 ```
 
-### Etape 2 — OPS : déployer votre HAProxy
+```bash
+# Voie Ansible (équivalente)
+cd solutions/6-haproxy/app/ansible
+ansible-playbook up.yml                             # même stack + même inventory-backends.ini
+cat inventory-backends.ini
+```
+
+### Etape 2 — OPS (repo `infra/`) : déployer votre HAProxy
+
+On change de projet : on quitte `app/` pour **`infra/`**, le repo de l'équipe ops. Là encore,
+**deux voies au choix** :
 
 ```bash
-cd ../ops/tf
+# Voie Terraform
+cd ../../infra/tf
 terraform init && terraform apply -auto-approve     # crée le conteneur "proxy" (debian:12, :8088, sur wpnet)
 ```
 
-### Etape 3 — OPS : récupérer l'inventaire
+```bash
+# Voie Ansible (équivalente) — provisionne le proxy ET construit l'inventaire
+cd ../../infra/ansible
+ansible-playbook up.yml
+```
 
-L'inventaire de l'ops (`ops/ansible/inventory.ini`) = les **backends récupérés de dev** +
-l'**hôte `proxy`** que vous administrez. On peut le construire en **récupérant** le fichier
-publié par dev :
+> **Nuance importante.** Le `up.yml` d'`infra/` ne fait pas la même chose que celui d'`app/` :
+> `app/` **publie** un inventaire (il livre ses backends), tandis qu'`infra/` le **consomme** et y
+> **ajoute son propre hôte `proxy`**. Il détecte tout seul si dev a publié depuis `app/tf/` ou
+> `app/ansible/`. Si vous prenez cette voie, l'**étape 3 est déjà faite**.
+
+### Etape 3 — OPS (repo `infra/`) : récupérer l'inventaire
+
+C'est le **handoff** entre les deux repos. L'inventaire de l'ops
+(`infra/ansible/inventory.ini`) = les **backends récupérés de dev** + l'**hôte `proxy`** que vous
+administrez. On le construit en **récupérant** le fichier publié par dev :
 
 ```bash
 cd ../ansible
-# repartir des backends publiés par dev, et y ajouter notre proxy :
-cp ../../ressources/inventory-backends.ini inventory.ini
+# repartir des backends publiés par dev (adaptez tf/ ou ansible/ selon l'étape 1) :
+cp ../../app/tf/inventory-backends.ini inventory.ini
 printf '\n[proxy]\nproxy ansible_connection=community.docker.docker\n' >> inventory.ini
 ```
 
-*(Une version prête est déjà fournie dans `ops/ansible/inventory.ini`.)*
+> En conditions réelles, ce `cp` **n'existe pas** : les deux repos étant séparés, dev **publie**
+> son inventaire (artefact de CI, dépôt d'artefacts, inventaire dynamique) et ops le **consomme**.
+> Le `cp` est notre raccourci de TP pour matérialiser ce contrat.
+
+*(Une version prête est déjà fournie dans `infra/ansible/inventory.ini`.)*
 
 ---
 
@@ -224,14 +267,22 @@ Le `proxy` est un `debian:12` **minimal** → on **réutilise le rôle `bootstra
 le réseau `wpnet`, donc il joint `wp` par son nom (lu dans l'inventaire).
 
 ```yaml
-# ops/ansible/site.yml
+# infra/ansible/site.yml
 - name: Reverse proxy devant WordPress
   hosts: proxy
-  become: true
+  gather_facts: false       # pas de facts tant que Python n'est pas amorcé (cf. 1)
   roles:
     - bootstrap_python      # image minimale → amorcer Python (cf. 1/ 4)
     - haproxy
 ```
+
+> **⚠️ Piège — ni Python, ni `sudo` dans un conteneur minimal.** Deux réflexes « VM » qui cassent
+> ici :
+> - **`become: true`** => `module_stderr: "/bin/sh: 1: sudo: not found"`. Un `debian:12` nu n'a
+>   **pas** de `sudo`… et on y est **déjà root**. **Correctif** => pas de `become`.
+> - **`gather_facts`** (actif par défaut) s'exécute **avant** les rôles, donc **avant**
+>   `bootstrap_python` => `No python interpreters found for host 'proxy'`. **Correctif** =>
+>   `gather_facts: false`, exactement comme le `bootstrap.yml` du [chapitre 1](1-FIRST-PLAYBOOK.md).
 
 > **🧪 Manip — proxy vers WordPress**
 >
@@ -240,15 +291,26 @@ le réseau `wpnet`, donc il joint `wp` par son nom (lu dans l'inventaire).
 > 2. `ansible-playbook -i inventory.ini site.yml` → HAProxy installé + configuré.
 > 3. Vérifiez que le proxy **route vers WordPress** :
 >    ```bash
->    curl -s -I http://localhost:8088 | head -1     # → HTTP/1.1 200/302 (servi via HAProxy → wp)
+>    curl -s -o /dev/null -w '%{http_code} -> %{redirect_url}\n' http://localhost:8088
 >    ```
+>    ```text
+>    302 -> http://127.0.0.1:8088/wp-admin/install.php
+>    ```
+>    La **redirection vers l'installeur WordPress** prouve que le trafic a bien traversé HAProxy
+>    jusqu'au backend `wp`.
+>
+>    > **⚠️ Si vous obtenez `500`** : ce n'est **pas** HAProxy (il a bien relayé), c'est
+>    > **WordPress qui ne joint pas sa base**. Sans `WORDPRESS_DB_USER`/`WORDPRESS_DB_PASSWORD`,
+>    > WP tente `root` **sans mot de passe** alors que MySQL exige `rootpw`. Les fichiers fournis
+>    > passent déjà ces variables ; vérifiez avec `docker exec wp env | grep WORDPRESS_DB`.
 > 4. Changez `haproxy_listen_port` ou une règle → rejouez → le **handler recharge** HAProxy
 >    (et `validate` bloquerait une config invalide). Rejouez sans rien changer → `changed=0`.
 >
 > *Observation : un point d'entrée unique, configuré **par du code**, devant l'application — et
 > rechargé seulement quand sa config bouge.*
 >
-> Nettoyage : `terraform destroy -auto-approve` dans **`ops/tf`** puis dans **`ressources/`**.
+> Nettoyage : `terraform destroy -auto-approve` dans **`infra/tf`** puis dans **`app/tf`**
+> (ou `docker compose down -v` dans `app/ansible` si vous avez pris la voie Ansible).
 
 ---
 
@@ -275,8 +337,9 @@ le réseau `wpnet`, donc il joint `wp` par son nom (lu dans l'inventaire).
 
 ## Recap
 
-- **Scénario réaliste** : **dev livre** l'app (`ressources/` + inventaire des backends) ;
-  **ops possède son edge** (`ops/` : TF déploie HAProxy, Ansible le configure depuis l'inventaire).
+- **Scénario réaliste, deux repos** : **dev livre** l'app (repo **`app/`** — `tf/` ou `ansible/` au
+  choix — + l'inventaire des backends) ; **ops possède son edge** (repo **`infra/`** : TF déploie
+  HAProxy, Ansible le configure depuis l'inventaire récupéré).
 - **HAProxy** = reverse proxy : `frontend` (**ingress** : écoute + routage) → `backend`
   (**les serveurs** cibles).
 - Config **générée par Ansible** (template Jinja2) + **`validate:`** (refuse une config cassée)
@@ -285,5 +348,5 @@ le réseau `wpnet`, donc il joint `wp` par son nom (lu dans l'inventaire).
 - **Pattern universel** : configurer un équipement d'entrée (proxy, LB, **pare-feu**, switch…)
   depuis l'inventaire — seuls **template** et **connection plugin** changent.
 
-➡️ **[FINAL — le capstone](../FINAL/README.md)** : assembler provision (TF/Ansible) +
-configuration (Ansible) dans le **pipeline** (on complète la brique du J1).
+➡️ **[7 — GitOps « pull » : réconciliation continue (AWX / Semaphore)](7-GITOPS-AWX.md)** :
+prendre du recul sur le **push** (notre lab) vs le **pull** GitOps, et lancer un contrôleur Ansible.
