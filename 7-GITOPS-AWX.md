@@ -257,6 +257,24 @@ doc et raisonnez par analogie AWX) :
 | **Task Template** | *Job Template* | le playbook `site.yml` + le repo + l'inventaire |
 | **Schedule** (cron) | *Schedule* | ex. toutes les 5 min => réconciliation **périodique** |
 
+> **⚠️ « J'ai branché le repo… et je dois QUAND MÊME tout créer à la main ? »** Oui, et c'est
+> **normal** : brancher un dépôt ne configure rien. Le contrôleur n'y lit **que du code**
+> (des playbooks) — pas votre intention.
+>
+> | | **Argo CD / Flux** (k8s) | **AWX / Semaphore** (Ansible) |
+> |---|---|---|
+> | Ce que l'agent lit dans le repo | l'**état désiré complet** (les manifestes **sont** la config) | des **playbooks** : du code **exécutable** |
+> | Ce qu'il en déduit | **tout** : quoi appliquer, où | **rien** de plus |
+> | Où vit la config | dans le **repo** | dans le **contrôleur** (Inventory / Template / Schedule) |
+>
+> Un `site.yml` seul est **ambigu** : le jouer sur la **prod** ou la **recette** ? avec quelles
+> **credentials** ? **quand** ? Aucune de ces réponses n'est dans le playbook — d'où les objets à
+> déclarer. Le **Repository** ne dit qu'une chose : **où chercher le code**.
+>
+> **C'est une force, pas une lacune** : le même playbook sert plusieurs environnements, en ne
+> changeant que l'inventaire. Et pour éviter le clic répétitif, **tout est scriptable par l'API**
+> (voir le bonus en fin de chapitre).
+
 > **Pourquoi un planning, et pas juste un bouton ?** Un run manuel, c'est du **push déguisé**. Le
 > **planning** (ou un webhook Git) est ce qui rend le modèle **pull** : le contrôleur **revient
 > tout seul** vérifier et réappliquer l'état désiré — même si personne ne pousse. C'est la
@@ -297,6 +315,19 @@ C'est la démonstration, en petit, de ce que font Argo/Flux sur un cluster.
 
 ## ✅ Bonus
 
+- **Tout créer par l'API** plutôt qu'à la main. Les objets du contrôleur (Project, Repository,
+  Inventory, Template, Schedule) sont eux aussi **pilotables as code** — pratique pour rejouer la
+  démo, et pour lever la frustration du « je dois tout recliquer » :
+  ```bash
+  C=/tmp/sem.cookie
+  curl -s -c $C -X POST localhost:3000/api/auth/login -H 'Content-Type: application/json' \
+    -d '{"auth":"admin","password":"changeme"}'                    # -> 204
+  curl -s -b $C -X POST localhost:3000/api/projects -H 'Content-Type: application/json' \
+    -d '{"name":"Demo GitOps","alert":false}'                      # -> {"id":1,...}
+  # puis : /keys, /repositories, /inventory, /environment, /templates, /schedules
+  curl -s -b $C localhost:3000/api/project/1/tasks                 # suivre les runs
+  ```
+  Un script complet et commenté est fourni : `solutions/7-gitops-awx/setup-api.sh`.
 - Branchez **le config repo ops du chapitre 6** (`infra/projects/haproxy`) au lieu du `demo-repo` => une vraie
   réconciliation de reverse proxy.
 - Remplacez le **schedule** par un **webhook** déclenché au `git push` => réconciliation **sur
