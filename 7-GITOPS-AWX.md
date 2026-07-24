@@ -184,11 +184,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy          # TODO : pourquoi attendre le healthcheck ?
-```
 
-Ajoutez le volume nommé sous une clé `volumes:` en fin de fichier :
-
-```yaml
 volumes:
   semaphore_db:
 ```
@@ -202,6 +198,8 @@ volumes:
 | `SEMAPHORE_ADMIN_*` | crée le **compte admin** au **premier** démarrage |
 
 > 📖 [Semaphore — variables d'environnement](https://docs.semaphoreui.com/administration-guide/docker/)
+
+Le fichier .env.example [dispo ici](solutions/7-gitops-awx/.env.example)
 
 > 💡 **Tester** — depuis `gitops/` :
 > ```bash
