@@ -7,7 +7,9 @@ reverse proxy **HAProxy** qui route **N applications** — et qui découvre les 
 seul**.
 
 > **Scénario à réaliser en autonomie.** Vous incarnez successivement les **deux** rôles. Les
-> fichiers sont fournis dans `solutions/6-haproxy/` ; l'exercice final consiste à **ajouter une
+> fichiers sont fournis dans
+> [`solutions/6-haproxy/`](https://github.com/bngams/2607-ansible-intro/tree/main/solutions/6-haproxy) ;
+> l'exercice final consiste à **ajouter une
 > application** et à la voir routée **sans toucher au proxy**.
 
 ## ✨ Objectifs
