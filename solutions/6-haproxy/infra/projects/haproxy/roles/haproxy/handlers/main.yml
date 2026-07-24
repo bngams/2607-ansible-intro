@@ -1,0 +1,7 @@
+---
+# En prod on prefererait "reloaded" (sans coupure). Ici la cible est un conteneur
+# debian:12 : on force un restart pour que la reprise de config soit fiable.
+- name: Recharger HAProxy
+  ansible.builtin.service:
+    name: haproxy
+    state: restarted

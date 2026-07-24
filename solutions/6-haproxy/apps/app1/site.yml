@@ -1,0 +1,16 @@
+---
+# Projet DEV app1 : on ne reecrit rien, on APPLIQUE le role publie par les ops.
+- name: Amorcer Python (conteneur minimal)
+  hosts: app1
+  gather_facts: false
+  roles:
+    - bootstrap_python
+
+- name: Deployer WordPress avec le role des ops
+  hosts: app1
+  gather_facts: true
+  vars:
+    wordpress_site_title: "App1 - WordPress"
+    wordpress_db_host: db
+  roles:
+    - wordpress

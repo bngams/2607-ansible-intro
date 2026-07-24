@@ -1,0 +1,12 @@
+# Les OPS provisionnent LEUR reverse proxy (le point d'entree unique).
+services:
+  proxy:
+    image: debian:12
+    container_name: proxy
+    command: ["sleep", "infinity"]
+    ports:
+      - "8088:80"
+    networks: [wpnet]
+networks:
+  wpnet:
+    external: true       # /!\ reseau existant, cree par les projets applicatifs

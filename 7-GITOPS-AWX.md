@@ -14,7 +14,8 @@ continue**.
 ## ✨ Objectifs
 
 - Distinguer **push** (ce qu'on a fait tout le J3) et **pull** (GitOps de réconciliation).
-- Situer les **outils** du paysage : Argo CD / Flux, **Ansible AWX / Tower**, Terraform Cloud.
+- Situer les **outils** du paysage : Argo CD / Flux, **Ansible AWX / AAP**, Terraform Cloud —
+  et savoir **pourquoi AWX est aujourd'hui inconfortable** à auto-héberger.
 - **Lancer un contrôleur** Ansible (UI web) en un `compose.yml`, y créer un **projet Git**, un
   **template de job** et un **planning** => obtenir une réconciliation périodique.
 - Savoir **pourquoi notre lab reste en push** (GitLab CI) — et quand le pull vaut le coût.
@@ -33,7 +34,7 @@ gitops/
 ```
 
 > Le `demo-repo/` **simule le repo Git** que le contrôleur va tirer. En vrai, ce serait votre
-> **config repo** ops (celui du chapitre 6) hébergé sur GitLab/GitHub.
+> **config repo** ops (le projet `infra/projects/haproxy` du chapitre 6) hébergé sur GitLab/GitHub.
 
 ---
 
@@ -75,43 +76,65 @@ Avant de manipuler, replaçons AWX parmi ses voisins. Chaque outil vise une **ci
 | Outil | Stratégie | Cible | Coût / réalité |
 |---|---|---|---|
 | **Argo CD / Flux** | pull (réconciliation) | **Kubernetes uniquement** | gratuit, mais **nécessite un cluster k8s** |
-| **Ansible AWX / Tower** | pull (sync de projet Git, *schedules*) | **serveurs / conteneurs** (Ansible) | AWX gratuit mais **lourd** (auto-hébergé, k8s) ; Tower payant |
+| **Ansible AWX / AAP** | pull (sync de projet Git, *schedules*) | **serveurs / conteneurs** (Ansible) | AWX gratuit mais **lourd** (k8s) et **releases en pause** depuis 07/2024 ; **AAP** (Red Hat) payant et supporté |
+| **Semaphore UI** | pull (sync Git, *schedules*) | **serveurs / conteneurs** (Ansible) | gratuit, **léger** (un binaire + une base), activement publié |
 | **Terraform Cloud** | pull (*runs* déclenchés par le VCS) | infra **Terraform** | *free tier* (côté provision) |
 
 > **À retenir.** Le vrai pull-GitOps industriel est surtout **Kubernetes** (Argo/Flux). Côté
-> **Ansible**, l'équivalent « s'abonner au repo » est **AWX/Tower** (puissant, mais lourd à
-> héberger). Pour de l'infra **non-k8s** sans gros outillage, un **pipeline planifié** ou un
-> **cron** qui rejoue le playbook suffit à obtenir une réconciliation périodique.
+> **Ansible**, l'équivalent « s'abonner au repo » est **AWX/AAP** — puissant, mais **lourd à
+> héberger**, et dont la version libre est **en refonte** (voir la section suivante) ;
+> **Semaphore UI** en est l'alternative légère. Pour de l'infra **non-k8s** sans gros outillage,
+> un **pipeline planifié** ou un **cron** qui rejoue le playbook suffit à obtenir une
+> réconciliation périodique.
 
 > 📖 [Argo CD](https://argo-cd.readthedocs.io/) · [Flux](https://fluxcd.io/) ·
 > [Ansible AWX](https://github.com/ansible/awx) · [Terraform Cloud](https://developer.hashicorp.com/terraform/cloud-docs)
 
 ---
 
-## ⚠️ 3 — Le cas AWX : puissant, mais lourd à héberger
+## ⚠️ 3 — Le cas AWX : lourd à héberger… et en pause
 
-On voudrait lancer **AWX** en un `compose.yml`, comme nos stacks précédentes. **Mauvaise
-nouvelle** : depuis la v18, **AWX n'est plus supporté hors Kubernetes**. Le seul chemin officiel
-est l'**AWX Operator** sur un cluster k8s ; le compose « dev/test » du dépôt `ansible/awx` se
-**génère via un playbook** et embarque une pile complète (web, task, receptor, postgres, redis) —
-trop lourd et trop fragile pour un TP.
+On voudrait lancer **AWX** en un `compose.yml`, comme nos stacks précédentes. **Deux mauvaises
+nouvelles**, et elles sont **indépendantes** :
+
+**1. AWX n'est plus supporté hors Kubernetes.** Depuis la v18, le seul chemin officiel est
+l'**AWX Operator** sur un cluster k8s. Le compose « dev/test » du dépôt `ansible/awx` se **génère
+via un playbook** et embarque une pile complète (web, task, receptor, postgres, redis) — trop
+lourd et trop fragile pour un TP.
+
+**2. Le projet est en pause.** Le dépôt affiche un avertissement sans ambiguïté : la **dernière
+version date du 2 juillet 2024**, et les **releases sont suspendues** le temps d'une
+**refonte de grande ampleur** (passage à une architecture orientée services).
+
+> *« Releases of this project are now paused during a large scale refactoring. »*
+> — avertissement en tête du dépôt [ansible/awx](https://github.com/ansible/awx)
 
 > **Symptôme** => vous cherchez un `docker compose up` officiel pour AWX et ne trouvez qu'un
-> installeur k8s (`awx-operator`) ou un compose « à générer ».
-> **Cause** => AWX cible Kubernetes ; le mono-hôte Docker n'est **pas** un mode de déploiement
-> supporté.
-> **Correctif** => pour **voir et comprendre** le modèle pull côté Ansible sans monter un cluster,
-> on utilise une **alternative légère** qui, elle, se lance vraiment en compose : **Semaphore UI**.
-> Les **concepts sont identiques** (projet Git, template de job, inventaire, planning).
+> installeur k8s (`awx-operator`) ou un compose « à générer » ; et la dernière release remonte à
+> **plus de deux ans**.
+> **Cause** => AWX cible **Kubernetes** (le mono-hôte Docker n'est pas un mode supporté), **et**
+> le projet est **gelé** pendant sa refonte.
+> **Correctif** => pour **voir et comprendre** le modèle pull côté Ansible sans monter un cluster
+> ni dépendre d'un projet en transition, on utilise une **alternative légère** qui, elle, se lance
+> vraiment en compose : **Semaphore UI**. Les **concepts sont identiques** (projet Git, template
+> de job, inventaire, planning).
 
-> **Deux époques, deux poids.** *AWX/Tower* = la référence Red Hat, riche (RBAC fin, workflows,
-> notifications) mais **lourde** (k8s). *Semaphore UI* = même **modèle mental** (project => template
-> => run planifié), **beaucoup plus léger** (un binaire Go + une base). Ici, pour le TP, on prend
-> Semaphore. **En fonction de vos contraintes et besoins en entreprise, vous pourrez arbitrer** :
-> cluster k8s déjà en place ou non, besoin de RBAC fin / workflows / support éditeur, taille de
-> l'équipe et coût d'hébergement.
+> **⚖️ Ce que ça ne veut PAS dire.** AWX n'est **pas** mort : c'est l'**upstream** de *Red Hat
+> Ansible Automation Platform*, qui reste, lui, un **produit commercial soutenu**. La pause
+> concerne les **releases de l'upstream libre** pendant la refonte. Autrement dit : en entreprise
+> **sous souscription Red Hat**, la question ne se pose pas (vous utilisez AAP) ; c'est
+> l'**auto-hébergement gratuit d'AWX** qui devient inconfortable aujourd'hui.
 
-> 📖 [AWX : install sur k8s (Operator)](https://ansible.readthedocs.io/projects/awx-operator/) ·
+> **Deux époques, deux poids.** *AWX / AAP* = la référence Red Hat, riche (RBAC fin, workflows,
+> notifications) mais **lourde** (k8s) et actuellement **en refonte**. *Semaphore UI* = même
+> **modèle mental** (project => template => run planifié), **beaucoup plus léger** (un binaire Go
+> + une base), et **activement publié**. Ici, pour le TP, on prend Semaphore. **En fonction de vos
+> contraintes et besoins en entreprise, vous pourrez arbitrer** : souscription AAP ou pas, cluster
+> k8s déjà en place ou non, besoin de RBAC fin / workflows / support éditeur, taille de l'équipe
+> et coût d'hébergement.
+
+> 📖 [Dépôt AWX (et son avertissement)](https://github.com/ansible/awx) ·
+> [AWX : install sur k8s (Operator)](https://ansible.readthedocs.io/projects/awx-operator/) ·
 > [Semaphore UI](https://semaphoreui.com/) · [AWX vs Semaphore](https://semaphoreui.com/blog/awx-vs-semaphore)
 
 ---
@@ -145,6 +168,8 @@ services:
     image: semaphoreui/semaphore:v2.18.28   # version epinglee (jamais :latest)
     ports:
       - "127.0.0.1:3000:3000"               # TODO : pourquoi lier au loopback ? (indice : dev)
+    volumes:
+      - ./demo-repo:/repos/demo-repo:ro     # le repo surveille, monte en LECTURE SEULE
     environment:
       SEMAPHORE_DB_DIALECT: postgres
       SEMAPHORE_DB_HOST: postgres
@@ -198,6 +223,13 @@ volumes:
 C'est ici que se joue le **pull**. On déclare au contrôleur **où est l'état désiré** (un repo Git),
 **quoi rejouer** (le playbook), **sur quoi** (l'inventaire), puis **quand** (un planning). C'est
 exactement le modèle **AWX** : *Project => Template => Schedule*.
+
+> **⚠️ Prérequis — `demo-repo/` doit être un VRAI dépôt Git.** Le contrôleur ne lit pas un
+> dossier : il le **clone**. Initialisez-le d'abord, sinon la synchronisation échoue :
+> ```bash
+> cd demo-repo && git init -q . && git add -A
+> git -c user.email=dev@example.com -c user.name=demo commit -qm "playbook de reconciliation"
+> ```
 
 Le `demo-repo/` fournit un playbook volontairement trivial — il **prouve** que le contrôleur tire
 le repo et rejoue le playbook :
@@ -267,7 +299,7 @@ C'est la démonstration, en petit, de ce que font Argo/Flux sur un cluster.
 
 ## ✅ Bonus
 
-- Branchez **votre config repo du chapitre 6** (HAProxy) au lieu du `demo-repo` => une vraie
+- Branchez **le config repo ops du chapitre 6** (`infra/projects/haproxy`) au lieu du `demo-repo` => une vraie
   réconciliation de reverse proxy.
 - Remplacez le **schedule** par un **webhook** déclenché au `git push` => réconciliation **sur
   événement** (au plus près du GitOps « temps réel »).
@@ -278,9 +310,11 @@ C'est la démonstration, en petit, de ce que font Argo/Flux sur un cluster.
 
 - **Push** = le pipeline pousse (notre lab, GitLab CI). **Pull** = l'agent sur l'infra **tire** et
   **réconcilie** en continu.
-- Paysage : **Argo/Flux** (k8s), **AWX/Tower** (Ansible), **Terraform Cloud** (TF).
-- **AWX** n'est plus supporté **hors k8s** => pour un TP on illustre le même modèle (*project =>
-  template => schedule*) avec **Semaphore UI**, réellement lançable en compose.
+- Paysage : **Argo/Flux** (k8s), **AWX/AAP** et **Semaphore UI** (Ansible), **Terraform Cloud** (TF).
+- **AWX** cumule deux freins : plus supporté **hors k8s**, et **releases en pause depuis
+  juillet 2024** (refonte en cours). Le **produit commercial AAP**, lui, reste soutenu.
+- => pour un TP on illustre le même modèle (*project => template => schedule*) avec
+  **Semaphore UI**, réellement lançable en compose.
 - **Notre lab reste en push** (GitLab CI) : **clair, gratuit, suffisant** pour la formation. Le
   pull vaut son coût surtout **sous Kubernetes** ou quand la **réconciliation continue** est un
   vrai besoin.

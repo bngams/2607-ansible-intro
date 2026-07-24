@@ -1,0 +1,5 @@
+---
+haproxy_listen_port: 80
+haproxy_balance_method: roundrobin
+haproxy_backend_port: 80       # port par defaut des apps (surchargeable par hote via app_port)
+haproxy_default_app: app1      # servie quand aucune route ne correspond

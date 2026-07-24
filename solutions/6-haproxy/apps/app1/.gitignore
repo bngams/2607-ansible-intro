@@ -1,0 +1,2 @@
+# Roles installes par ansible-galaxy : on versionne requirements.yml, pas les roles.
+roles/wordpress/

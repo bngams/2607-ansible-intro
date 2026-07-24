@@ -1,0 +1,39 @@
+global
+    daemon
+
+defaults
+    mode http
+    timeout connect 5s
+    timeout client  30s
+    timeout server  30s
+
+# --- INGRESS : une seule entree, N applications ---
+# L'ANNUAIRE, c'est le groupe [apps] de l'inventaire : chaque hote y devient
+# automatiquement une route /<hostname>. Ajouter une app = ajouter une ligne
+# dans l'inventaire. AUCUNE modification de ce template.
+frontend http_in
+    bind *:{{ haproxy_listen_port }}
+
+{% for app in groups['apps'] | default([]) | sort %}
+    acl is_{{ app }} path_beg /{{ app }}
+{% endfor %}
+
+{% for app in groups['apps'] | default([]) | sort %}
+    use_backend {{ app }}_be if is_{{ app }}
+{% endfor %}
+
+{% if haproxy_default_app is defined %}
+    default_backend {{ haproxy_default_app }}_be
+{% endif %}
+
+# --- BACKENDS : un par application declaree dans l'annuaire ---
+{% for app in groups['apps'] | default([]) | sort %}
+backend {{ app }}_be
+    balance {{ haproxy_balance_method }}
+    # /{{ app }} (sans slash) -> on redirige, sinon le strip donne un chemin VIDE (HTTP 400)
+    http-request redirect code 301 location /{{ app }}/ if { path /{{ app }} }
+    # on retire le prefixe avant de transmettre a l'app : /{{ app }}/x -> /x
+    http-request set-path %[path,regsub(^/{{ app }},)]
+    server {{ app }} {{ app }}:{{ hostvars[app].app_port | default(haproxy_backend_port) }} check
+
+{% endfor %}

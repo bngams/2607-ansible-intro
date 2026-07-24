@@ -1,8 +1,0 @@
----
-# Dependances EXTERNES, versionnees ici (pas les roles telecharges eux-memes).
-# Installation : ansible-galaxy install -r requirements.yml -p ./roles
-collections:
-  - name: community.docker        # connexion aux conteneurs
-roles:
-  - name: geerlingguy.haproxy     # role HAProxy tout fait (Galaxy)
-    version: 1.3.2                # on EPINGLE la version -> reproductible

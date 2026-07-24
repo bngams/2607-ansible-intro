@@ -1,0 +1,8 @@
+---
+# Projet OPS : configurer le reverse proxy a partir de l'ANNUAIRE (groupe [apps]).
+- name: Configurer le reverse proxy depuis l'annuaire
+  hosts: proxy
+  gather_facts: false      # conteneur minimal : pas de Python tant qu'on n'a pas amorce
+  roles:
+    - bootstrap_python
+    - haproxy

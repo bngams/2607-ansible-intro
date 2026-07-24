@@ -1,0 +1,18 @@
+# L'equipe DEV provisionne SA cible applicative (et sa base).
+# Le hostname du conteneur = le nom qui servira de ROUTE (/app1) cote proxy.
+services:
+  app1:
+    image: debian:12
+    container_name: app1        # <- devient la route /app1 dans l'annuaire
+    command: ["sleep", "infinity"]
+    networks: [wpnet]
+  db:
+    image: mysql:8.0
+    container_name: db
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpw
+      MYSQL_DATABASE: wordpress
+    networks: [wpnet]
+networks:
+  wpnet:
+    name: wpnet

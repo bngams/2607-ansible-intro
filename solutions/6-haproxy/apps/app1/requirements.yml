@@ -1,0 +1,17 @@
+---
+# L'equipe DEV ne reecrit pas l'installation de WordPress :
+# elle CONSOMME le role publie par les OPS, en epinglant une VERSION.
+#
+# En entreprise, "src" pointe sur le depot Git des ops :
+#   src: git+https://gitlab.example.com/ops/ansible-role-wordpress.git
+#   version: v1.0.0
+#
+# Dans ce lab, le "depot ops" est un dossier local. ansible-galaxy exige un
+# chemin ABSOLU pour git+file:// -> le script ./install-deps.sh le resout.
+roles:
+  - name: wordpress
+    src: git+file://__OPS_REPO__/infra/published_roles/wordpress
+    version: v1.0.0
+
+collections:
+  - name: community.docker

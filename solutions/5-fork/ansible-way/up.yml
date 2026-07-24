@@ -1,18 +1,20 @@
 ---
-- name: Monter les conteneurs avec Ansible
+- name: Monter la cible applicative avec Ansible
   hosts: localhost
   gather_facts: false
   tasks:
-    - name: Démarrer la stack (docker compose)
+    - name: Demarrer la stack (docker compose)
       community.docker.docker_compose_v2:
         project_src: .
         state: present
 
-    - name: Générer l'inventaire pour la suite
+    - name: Generer l'inventaire pour la suite
       ansible.builtin.copy:
         dest: inventory.ini
+        mode: "0644"
         content: |
-          [wordpress]
-          wp ansible_connection=community.docker.docker
+          [apps]
+          app1 ansible_connection=community.docker.docker
+
           [db]
           db ansible_connection=community.docker.docker

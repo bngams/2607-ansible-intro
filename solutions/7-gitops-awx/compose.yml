@@ -20,6 +20,10 @@ services:
     image: semaphoreui/semaphore:v2.18.28   # version epinglee (pas de :latest)
     ports:
       - "127.0.0.1:3000:3000"               # UI liee au loopback (dev)
+    volumes:
+      # Le "repo Git surveille". En vrai ce serait une URL GitLab/GitHub ;
+      # ici on monte un depot LOCAL pour que la demo tourne sans reseau.
+      - ./demo-repo:/repos/demo-repo:ro
     environment:
       SEMAPHORE_DB_DIALECT: postgres
       SEMAPHORE_DB_HOST: postgres

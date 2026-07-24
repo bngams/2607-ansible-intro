@@ -1,3 +1,5 @@
+# Meme resultat que tf-way : le reseau wpnet + la cible app1 + la base db.
+# Noms de conteneurs FIXES -> ils doivent matcher l'inventaire genere.
 services:
   db:
     image: mysql:8.0
@@ -6,11 +8,12 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: rootpw
       MYSQL_DATABASE: wordpress
-  wordpress:
-    image: wordpress:latest
-    container_name: wp          # sinon compose nomme "<projet>-wordpress-1"
+  app1:
+    image: debian:12            # cible NUE : Ansible la configurera (cf. chapitre 6)
+    container_name: app1        # sinon compose nomme "<projet>-app1-1"
+    command: ["sleep", "infinity"]
     depends_on: [db]
-    ports: ["8080:80"]
     networks: [wpnet]
 networks:
-  wpnet: {}
+  wpnet:
+    name: wpnet                 # nom FIXE : le proxy du chapitre 6 s'y branchera

@@ -1,0 +1,21 @@
+---
+- name: Installer HAProxy (+ procps, requis par son script init)
+  ansible.builtin.apt:
+    name:
+      - haproxy
+      - procps
+    state: present
+    update_cache: true
+
+- name: Deployer la configuration generee depuis l'annuaire
+  ansible.builtin.template:
+    src: haproxy.cfg.j2
+    dest: /etc/haproxy/haproxy.cfg
+    mode: "0644"
+    validate: haproxy -c -f %s     # refuse une config cassee AVANT de l'ecrire
+  notify: Recharger HAProxy
+
+- name: Demarrer HAProxy
+  ansible.builtin.service:
+    name: haproxy
+    state: started

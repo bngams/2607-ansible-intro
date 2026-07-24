@@ -1,450 +1,354 @@
-# 6 — Configurer un reverse proxy (HAProxy) avec Ansible
+# 6 — Rôles publiés & routage dynamique (dev / ops)
 
-Suite de [5](5-TERRAFORM-VS-ANSIBLE.md). Les conteneurs WordPress + DB tournent, et on a un
-**inventaire**. On souhaite mettre un **reverse proxy** (**HAProxy**) devant WordPress : c'est
-l'entrée unique qui route le trafic vers l'application. Et on le **configure**, dans notre cas,
-**avec Ansible** : c'est l'aboutissement de tout ce qu'on a vu (template, handler, rôle, variables).
+Suite de [5](5-TERRAFORM-VS-ANSIBLE.md). On sait provisionner une cible et la configurer. Reste
+la question **d'organisation** : quand **deux équipes** se partagent le travail, **qui fournit
+quoi** ? Ce chapitre monte une **stratégie Ansible complète** entre **dev** et **ops**, avec un
+reverse proxy **HAProxy** qui route **N applications** — et qui découvre les nouvelles **tout
+seul**.
 
-> **Pourquoi un reverse proxy ?** Un point d'entrée unique : router selon l'URL/le domaine,
-> terminer le TLS, exposer plusieurs apps derrière une seule adresse, **répartir la charge**
-> (load-balancing) entre plusieurs instances. Ici on fait le cas de base : **proxy vers une
-> instance WordPress**.
+> **Scénario à réaliser en autonomie.** Vous incarnez successivement les **deux** rôles. Les
+> fichiers sont fournis dans `solutions/6-haproxy/` ; l'exercice final consiste à **ajouter une
+> application** et à la voir routée **sans toucher au proxy**.
 
-## Le scénario (deux équipes, deux projets)
+## ✨ Objectifs
 
-On se met dans une situation **réaliste** :
+- Comprendre les **deux artefacts** qui circulent entre dev et ops.
+- **Publier** un rôle Ansible (`meta/main.yml`, version) et le **consommer** via
+  `requirements.yml` — le `requirements.yml` du [chapitre 4](4-ROLES.md) devient enfin concret.
+- Générer une config HAProxy **depuis un annuaire**, avec `template` + `validate:` + **handler**.
+- Ajouter une application au routage en **une ligne**, sans modifier le template.
 
-- L'**équipe dev** a livré des **conteneurs à déployer** (l'app WordPress + sa base) — c'est le
-  projet **`app/`**, qui publie aussi l'**inventaire des backends**.
-- L'**équipe ops** (vous) possède **son propre projet** : le projet **`infra/`**, avec **son**
-  reverse proxy HAProxy. Vous le **déployez** (Terraform) **et** le **configurez** (Ansible) en
-  **récupérant les infos de l'inventaire** publié par dev.
+## Le scénario (deux organisations, deux responsabilités)
 
-> **Imaginez deux dépôts Git séparés.** `app/` et `infra/` ne sont pas deux sous-dossiers d'un même
-> projet : ce sont **deux repos distincts**, avec **deux équipes**, **deux cycles de vie** et
-> **deux droits d'accès**. Ici on les met côte à côte uniquement pour que le TP tienne dans un
-> seul dossier. Le seul **contrat** entre eux = l'**inventaire des backends** publié par `app/`.
+- L'**équipe ops** possède l'**infra** : l'entrée du trafic (le proxy) **et** les **standards**
+  qu'elle publie sous forme de **rôles réutilisables**.
+- Les **équipes dev** possèdent **leurs applications** : chacune son repo, son cycle de release.
+  Elles ne réécrivent pas l'installation d'un WordPress — elles **consomment** le rôle des ops.
 
-C'est le **workflow GitOps** classique : deux flux distincts (dev *et* ops), chacun avec **son
-repo**, qui convergent vers l'environnement déployé.
+**Deux artefacts circulent**, et c'est tout le sujet du chapitre :
 
-```mermaid
-flowchart LR
-    DEV(["👩‍💻 DEV"]) --> CODE["code repo"] --> CI["CI"] --> REG["registry"] --> ENV["env déployé"]
-    OPSREPO["config repo"] --> ENV
-    OPS(["🧑‍🔧 OPS"]) --> OPSREPO
-```
-
-> Schéma inspiré du *« GitOps Workflow »* de Red Hat (DEV → code repo → CI → registry → déploiement ;
-> OPS → config repo → déploiement) : [illustration](https://i.ytimg.com/vi/vajIf17ngws/maxresdefault.jpg).
-
-*(C'est le rôle de l'**ops** — son **config repo** — qu'on incarne dans ce chapitre.)* Concrètement
-pour notre lab :
+| Sens | Artefact | Ce que ça résout |
+|---|---|---|
+| **ops => dev** | un **rôle publié** (`wordpress`, épinglé `v1.0.0`) | les devs héritent d'un standard **maintenu et versionné** au lieu de copier-coller |
+| **dev => ops** | le **nom de l'application** | les ops **exposent** l'app sans rien savoir de son contenu |
 
 ```mermaid
 flowchart LR
-    subgraph DEV["Repo APP (app/) — équipe dev"]
-        WP["conteneurs wp + db<br/>(tf/ ou ansible/)"] --> INV["inventaire des backends"]
+    subgraph OPS["Repo OPS (infra/)"]
+        ROLE["published_roles/wordpress<br/>rôle publié v1.0.0"]
+        PROXY["projects/haproxy<br/>+ ANNUAIRE des apps"]
     end
-    subgraph OPS["Repo INFRA (infra/) — équipe ops"]
-        TF["TF : déploie HAProxy"] --> CFG["Ansible : configure HAProxy"]
+    subgraph DEV["Repos DEV (apps/)"]
+        A1["app1<br/>requirements.yml"]
+        A2["app2"]
     end
-    INV -. handoff .-> CFG
-    CFG --> R["HAProxy → route vers wp"]
+    ROLE -. "dépendance versionnée" .-> A1
+    A1 -. "déclare son nom" .-> PROXY
+    A2 -. "déclare son nom" .-> PROXY
+    PROXY --> R["/app1 → app1<br/>/app2 → app2"]
 ```
 
-> **La portée dépasse HAProxy.** Configurer un **équipement d'entrée à partir de données
-> d'inventaire** est un pattern ops **universel** : la même démarche Ansible vaudrait pour un
-> **load balancer**, un **pare-feu** (templater des règles ACL/NAT), un **switch/routeur**
-> (Cisco/Arista)… **Seuls le template et le *connection plugin* changent** (cf. la table des
-> connexions en [0](0-SETUP.md) : `docker`, `ssh`, `network_cli`…). HAProxy n'est qu'un
-> exemple **concret et exécutable** de ce pattern.
+## 📁 L'arborescence cible
 
-> **⚠️ Note sur les conteneurs.** Dans ce chapitre, on **configure des conteneurs en cours
-> d'exécution** avec Ansible. En pratique, vu le **cycle de vie** d'un conteneur (immuable,
-> jetable), on intègre souvent cette config **dans l'image** (Dockerfile) ou le **compose**.
-> Ici, on traite le conteneur comme une **abstraction de machine** (VM/serveur) — c'est tout
-> l'intérêt du *connection plugin* (cf. [0](0-SETUP.md)) : la **démarche Ansible est
-> identique** quel que soit le type de cible.
+```
+infra/                               # LES OPS
+├── published_roles/
+│   ├── wordpress/                   # le rôle publié (meta/, defaults/, tasks/, templates/)
+│   └── publish.sh                   # "publier" = versionner + taguer
+└── projects/
+    └── haproxy/
+        ├── inventory.ini            # L'ANNUAIRE : le groupe [apps]
+        ├── site.yml
+        └── roles/haproxy/           # template + handler + validate
+apps/                                # LES DEVS (un repo par application)
+├── app1/                            # consomme le rôle wordpress
+│   ├── requirements.yml
+│   ├── install-deps.sh
+│   └── site.yml
+└── app2/                            # l'application à ajouter (exercice)
+```
+
+> **Imaginez trois dépôts Git.** `infra/`, `apps/app1/` et `apps/app2/` sont côte à côte
+> uniquement pour que le TP tienne dans un dossier. En vrai : **trois repos**, **trois équipes**,
+> **trois cycles de vie**.
 
 ### Ressources utiles
 
-- [Module `template`](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/template_module.html) ·
-  [Rôles](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_reuse_roles.html)
-- [Configuration HAProxy](https://docs.haproxy.org/) (frontend / backend)
+- [Rôles](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_reuse_roles.html) ·
+  [`meta/main.yml`](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_reuse_roles.html#role-dependencies)
+- [`ansible-galaxy` (installer des rôles)](https://docs.ansible.com/ansible/latest/galaxy/user_guide.html)
+- [Configuration HAProxy](https://docs.haproxy.org/) (frontend / backend / ACL)
 
 ---
 
-## Les deux projets (fournis clé en main)
+## 📦 1 — Côté OPS : publier un rôle
 
-Commençons par **monter le décor** : les deux projets sont fournis prêts à l'emploi, on les lance
-pour obtenir des **cibles réelles** (les conteneurs) et un **inventaire**. On écrira la
-configuration HAProxy **juste après**, une fois qu'on aura quelque chose à configurer.
+Un rôle « privé » vit dans `roles/` à côté d'un playbook. Un rôle **publié** est un **livrable** :
+il a une **identité**, une **version**, et un **contrat** (ses variables). La différence tient à
+un fichier — sans lui, `ansible-galaxy` refuse de l'installer.
 
-Tout est dans `solutions/6-haproxy/` :
+🚧 **À compléter** — `infra/published_roles/wordpress/meta/main.yml`
 
+```yaml
+galaxy_info:
+  role_name: wordpress
+  namespace: ops
+  author: equipe-ops
+  description: Deploie WordPress (Apache + PHP) sur une cible Debian.
+  license: MIT
+  min_ansible_version: "2.12"
+  platforms:
+    - name: Debian
+      versions:
+        - bookworm
+dependencies: []        # TODO : un rôle publié peut lui-même dépendre d'autres rôles
 ```
-app/               # REPO 1 — DEV : la stack applicative livrée
-  ├─ tf/           -> wpnet + db + wp, et publie inventory-backends.ini
-  └─ ansible/      -> MEME résultat en Ansible (compose.yml + up.yml) — au choix
-infra/             # REPO 2 — OPS : votre projet
-  ├─ tf/           -> déploie VOTRE conteneur HAProxy (sur wpnet, :8088)
-  ├─ ansible/      -> MEME provisioning en Ansible (compose.yml + up.yml)
-  │                   + rôle haproxy maison + site.yml + inventory
-  └─ ansible-galaxy/ -> BONUS : le même résultat avec un rôle Galaxy
-```
 
-> **Pourquoi `tf/` ET `ansible/` dans `app/` ?** Comme au [chapitre 5](5-TERRAFORM-VS-ANSIBLE.md),
-> **les deux voies produisent le même résultat** (mêmes conteneurs `db`/`wp`, même réseau `wpnet`,
-> même inventaire publié). On met Terraform en avant pour le provisioning, mais si vous travaillez
-> plutôt côté Ansible, **prenez `app/ansible/`** — la suite du chapitre est identique. C'est le
-> **contrat de sortie** (l'inventaire des backends) qui compte, pas l'outil qui l'a produit.
+| Élément | Rôle |
+|---|---|
+| `meta/main.yml` | **obligatoire** pour être installable — c'est la carte d'identité du rôle |
+| `defaults/main.yml` | le **contrat public** : ce que les devs ont le droit de surcharger |
+| `platforms` | les OS supportés — un dev sait tout de suite si le rôle le concerne |
 
-### Etape 1 — DEV (repo `app/`) : la stack applicative
+> **⚠️ Piège — sans `meta/main.yml`, rien ne s'installe.**
+> ```text
+> [WARNING]: - wordpress was NOT installed successfully:
+>            this role does not appear to have a meta/main.yml file.
+> ```
+> **Correctif** => créez le fichier ci-dessus. C'est **précisément** ce qui distingue un dossier
+> `roles/` d'un rôle **publiable**.
 
-Au choix, **une** des deux voies — le résultat est le même :
+**Publier** = versionner et taguer. En entreprise, un `git push` sur GitLab ; ici, un dépôt local :
 
 ```bash
-# Voie Terraform
-cd solutions/6-haproxy/app/tf
-terraform init && terraform apply -auto-approve     # crée db + wp, écrit inventory-backends.ini
-cat inventory-backends.ini                          # l'inventaire des backends, publié pour l'ops
+cd solutions/6-haproxy/infra/published_roles
+./publish.sh          # git init + commit + tag v1.0.0
 ```
 
-```bash
-# Voie Ansible (équivalente)
-cd solutions/6-haproxy/app/ansible
-ansible-playbook up.yml                             # même stack + même inventory-backends.ini
-cat inventory-backends.ini
-```
-
-### Etape 2 — OPS (repo `infra/`) : déployer votre HAProxy
-
-On change de projet : on quitte `app/` pour **`infra/`**, le repo de l'équipe ops. Là encore,
-**deux voies au choix** :
-
-```bash
-# Voie Terraform
-cd ../../infra/tf
-terraform init && terraform apply -auto-approve     # crée le conteneur "proxy" (debian:12, :8088, sur wpnet)
-```
-
-```bash
-# Voie Ansible (équivalente) — provisionne le proxy ET construit l'inventaire
-cd ../../infra/ansible
-ansible-playbook up.yml
-```
-
-> **Nuance importante.** Le `up.yml` d'`infra/` ne fait pas la même chose que celui d'`app/` :
-> `app/` **publie** un inventaire (il livre ses backends), tandis qu'`infra/` le **consomme** et y
-> **ajoute son propre hôte `proxy`**. Il détecte tout seul si dev a publié depuis `app/tf/` ou
-> `app/ansible/`. Si vous prenez cette voie, l'**étape 3 est déjà faite**.
-
-### Etape 3 — OPS (repo `infra/`) : récupérer l'inventaire
-
-C'est le **handoff** entre les deux repos. L'inventaire de l'ops
-(`infra/ansible/inventory.ini`) = les **backends récupérés de dev** + l'**hôte `proxy`** que vous
-administrez. On le construit en **récupérant** le fichier publié par dev :
-
-```bash
-cd ../ansible
-# repartir des backends publiés par dev (adaptez tf/ ou ansible/ selon l'étape 1) :
-cp ../../app/tf/inventory-backends.ini inventory.ini
-printf '\n[proxy]\nproxy ansible_connection=community.docker.docker\n' >> inventory.ini
-```
-
-> En conditions réelles, ce `cp` **n'existe pas** : les deux repos étant séparés, dev **publie**
-> son inventaire (artefact de CI, dépôt d'artefacts, inventaire dynamique) et ops le **consomme**.
-> Le `cp` est notre raccourci de TP pour matérialiser ce contrat.
-
-*(Une version prête est déjà fournie dans `infra/ansible/inventory.ini`.)*
+> 💡 **Tester**
+> ```text
+> Role publie : .../infra/published_roles/wordpress
+> Version     : v1.0.0
+> ```
 
 ---
 
-## Anatomie d'une config HAProxy
+## 🔗 2 — Côté DEV : consommer le rôle publié
 
-Le décor est planté : `wp` et `db` tournent, votre conteneur `proxy` est déployé, et votre
-inventaire liste les trois. **Il ne manque plus qu'une chose** : la **configuration** à déposer
-sur ce proxy. Avant de la générer avec Ansible, regardons **ce qu'on doit produire**.
+L'équipe dev **ne réécrit pas** l'installation de WordPress. Elle la **déclare en dépendance**,
+en **épinglant la version** — comme un `package.json` ou un `terraform init`.
 
-Deux blocs essentiels — c'est le vocabulaire **ops** que la config exprime :
+🚧 **À compléter** — `apps/app1/requirements.yml`
 
-| Bloc | Rôle | Ce qu'on y règle |
-|---|---|---|
-| **`frontend`** *(ingress)* | **par où ça entre** : l'écoute | port/IP d'écoute, **ACL** (règles de routage par domaine/chemin), quel backend cibler |
-| **`backend`** *(vers les apps)* | **où ça part** : les serveurs cibles | la liste des **serveurs** (nos conteneurs), l'algo de **répartition**, les *health checks* |
+```yaml
+roles:
+  - name: wordpress
+    src: git+file://__OPS_REPO__/infra/published_roles/wordpress
+    version: v1.0.0          # TODO : pourquoi épingler plutôt que suivre la branche ?
 
+collections:
+  - name: community.docker
 ```
-client ──▶ frontend (écoute :80, ACL)  ──▶ backend (serveurs)  ──▶ conteneur WordPress
+
+Le playbook du dev se réduit alors à **appliquer** le rôle, en surchargeant ce dont il a besoin :
+
+```yaml
+# apps/app1/site.yml
+- name: Deployer WordPress avec le role des ops
+  hosts: app1
+  gather_facts: true
+  vars:
+    wordpress_site_title: "App1 - WordPress"   # surcharge du contrat public
+    wordpress_db_host: db
+  roles:
+    - wordpress
 ```
 
-> **Et le load-balancing ?** Il suffit de mettre **plusieurs `server`** dans le backend +
-> `balance roundrobin` → HAProxy répartit. Ici on fait **un seul backend** (une instance WP).
+> **⚠️ Piège — `git+file://` exige un chemin ABSOLU.** Un chemin relatif est interprété comme un
+> nom de rôle Galaxy :
+> ```text
+> sorry, ../../infra/published_roles/wordpress was not found on https://galaxy.ansible.com/api/.
+> ```
+> **Correctif** => le script `install-deps.sh` résout la racine du lab et substitue
+> `__OPS_REPO__`. **En entreprise, ce problème n'existe pas** : `src:` pointe simplement sur
+> `git+https://gitlab.example.com/ops/ansible-role-wordpress.git`.
+
+> 💡 **Tester** — depuis `apps/app1/` :
+> ```bash
+> docker compose up -d          # la cible applicative + sa base
+> ./install-deps.sh             # récupère le rôle publié par les ops
+> ansible-playbook -i inventory.ini site.yml
+> ```
+> ```text
+> - wordpress (v1.0.0) was installed successfully
+> app1  : ok=12   changed=9    unreachable=0    failed=0
+> ```
+
+> **À retenir.** On **versionne `requirements.yml`**, **jamais** les rôles téléchargés (d'où le
+> `.gitignore` sur `roles/wordpress/`). En CI, `install-deps.sh` précède `ansible-playbook`.
 
 ---
 
-## Le template `haproxy.cfg.j2`
+## 📇 3 — Côté OPS : l'annuaire des applications
 
-On sait **quoi** produire (un `frontend` + un `backend`). Reste le **comment** : plutôt que
-d'écrire ce fichier à la main sur le serveur, on le **génère** avec Ansible (Jinja2) et des
-**variables**, pour le rendre **« paramétrable »** :
+C'est la pièce centrale. Le proxy ne connaît pas les applications **en dur** : il les lit dans un
+**annuaire**, et **la route dérive du nom de l'hôte**.
+
+🚧 **À compléter** — `infra/projects/haproxy/inventory.ini`
+
+```ini
+# Chaque hôte du groupe [apps] devient AUTOMATIQUEMENT une route /<hostname>.
+[apps]
+app1 ansible_connection=community.docker.docker
+# TODO (exercice) : ajouter app2 ici
+
+[proxy]
+proxy ansible_connection=community.docker.docker
+```
+
+| Convention | Conséquence |
+|---|---|
+| l'hôte s'appelle `app1` | il est exposé sur **`/app1`** |
+| il appartient au groupe `[apps]` | il est **pris en compte** par le proxy |
+| rien d'autre à déclarer | **aucun** fichier de route, **aucune** négociation de chemin |
+
+> **Pourquoi dériver la route du nom ?** Parce que c'est le **contrat le plus léger possible** :
+> le dev n'a rien à écrire de plus que le nom de son application, et l'ops n'a rien à inventer.
+> Un nom **unique** suffit à garantir une route **unique**.
+
+---
+
+## 🧩 4 — Le template : générer la config depuis l'annuaire
+
+Le template ne cite **aucune** application : il **boucle** sur le groupe `[apps]`.
+
+🚧 **À compléter** — `roles/haproxy/templates/haproxy.cfg.j2` (extrait)
 
 ```jinja
-global
-    daemon
-
-defaults
-    mode http
-    timeout connect 5s
-    timeout client 30s
-    timeout server 30s
-
-# --- INGRESS : par où le trafic entre ---
 frontend http_in
     bind *:{{ haproxy_listen_port }}
-    default_backend wordpress_app
 
-# --- BACKEND : vers l'application ---
-backend wordpress_app
-    server wp1 {{ wp_backend_host }}:{{ wp_backend_port }} check
+{% for app in groups['apps'] | default([]) | sort %}
+    acl is_{{ app }} path_beg /{{ app }}
+{% endfor %}
+
+{% for app in groups['apps'] | default([]) | sort %}
+    use_backend {{ app }}_be if is_{{ app }}
+{% endfor %}
+
+    default_backend {{ haproxy_default_app }}_be
+
+{% for app in groups['apps'] | default([]) | sort %}
+backend {{ app }}_be
+    balance {{ haproxy_balance_method }}
+    # TODO : pourquoi cette redirection AVANT le strip ? (indice : chemin vide)
+    http-request redirect code 301 location /{{ app }}/ if { path /{{ app }} }
+    http-request set-path %[path,regsub(^/{{ app }},)]
+    server {{ app }} {{ app }}:{{ haproxy_backend_port }} check
+{% endfor %}
 ```
 
-> `{{ wp_backend_host }}` = le **hostname du conteneur WordPress** (nom résolu sur le réseau
-> Docker).
-> `check` = active un *health check* basique.
-> Tout est **paramétrable** via les variables. Par exemple, on peut changer le port d'écoute ou
-> la cible sans réécrire la config.
+| Directive | Rôle |
+|---|---|
+| `acl is_X path_beg /X` | **nomme une condition** : « le chemin commence par `/X` » |
+| `use_backend X_be if is_X` | **aiguille** vers le backend correspondant |
+| `set-path … regsub(^/X,)` | **retire le préfixe** avant de transmettre (`/X/y` -> `/y`) |
+| `check` | *health check* : un backend malade est **sorti** de la rotation |
 
----
+> **⚠️ Piège — `/app2` sans slash final renvoie HTTP 400.** Le strip du préfixe produit un chemin
+> **vide**, donc une requête invalide — visible dans les logs du backend :
+> ```text
+> "GET  HTTP/1.1" 400
+> ```
+> **Correctif** => rediriger `/app2` vers `/app2/` **avant** le strip (la ligne `redirect`
+> ci-dessus).
 
-## Le rôle `haproxy`
-
-On applique les bonnes pratiques de [4](4-ROLES.md), en créant un **rôle** propre à
-l'installation et la configuration de HAProxy. *(On peut repartir de `ansible-galaxy role init
-roles/haproxy` pour générer l'arborescence.)*
-
-`roles/haproxy/defaults/main.yml` :
-
-```yaml
-haproxy_listen_port: 80
-wp_backend_host: wp        # le conteneur WordPress (5)
-wp_backend_port: 80
-```
-
-`roles/haproxy/tasks/main.yml` :
+Le rôle applique ensuite les réflexes du [chapitre 4](4-ROLES.md) — `validate:` puis **handler** :
 
 ```yaml
-- name: Installer HAProxy
-  ansible.builtin.apt:
-    name: haproxy
-    state: present
-    update_cache: true
-
-- name: Déployer la configuration (template)
+- name: Deployer la configuration generee depuis l'annuaire
   ansible.builtin.template:
     src: haproxy.cfg.j2
     dest: /etc/haproxy/haproxy.cfg
     mode: "0644"
-    validate: haproxy -c -f %s      # /!\ refuse une config invalide AVANT de l'écrire
+    validate: haproxy -c -f %s     # refuse une config cassée AVANT de l'écrire
   notify: Recharger HAProxy
-
-- name: Démarrer et activer HAProxy
-  ansible.builtin.service:
-    name: haproxy
-    state: started
-    enabled: true
 ```
 
-`roles/haproxy/handlers/main.yml` :
+> **⚠️ Piège — le `reload` ne reprend pas la config.** Le script init de HAProxy s'appuie sur
+> `ps`, absent d'une image `debian:12`. **Correctif** => installer **`procps`** avec HAProxy (et,
+> pour ce lab, un `restart` plutôt qu'un `reload` ; en prod on préfère le `reload`, sans coupure).
 
-```yaml
-- name: Recharger HAProxy
-  ansible.builtin.service:
-    name: haproxy
-    state: reloaded
-```
-
-> **`validate:`** est un réflexe ops : Ansible lance `haproxy -c -f` sur le fichier rendu **avant**
-> de le déployer → une config cassée **n'atteint jamais** le serveur. Inestimable en prod.
-
----
-
-## Le playbook (OPS)
-
-Toutes les pièces sont prêtes : les **cibles** (étapes 1-3), le **template** et le **rôle**. Le
-playbook n'a plus qu'à les **assembler** — et, comme au [chapitre 4](4-ROLES.md), il se réduit à
-une liste de `roles:`.
-
-Le `proxy` est un `debian:12` **minimal** → on **réutilise le rôle `bootstrap_python`** de
-[1](1-FIRST-PLAYBOOK.md)/[4](4-ROLES.md) avant le rôle `haproxy`. Le conteneur est sur
-le réseau `wpnet`, donc il joint `wp` par son nom (lu dans l'inventaire).
-
-```yaml
-# infra/ansible/site.yml
-- name: Reverse proxy devant WordPress
-  hosts: proxy
-  gather_facts: false       # pas de facts tant que Python n'est pas amorcé (cf. 1)
-  roles:
-    - bootstrap_python      # image minimale → amorcer Python (cf. 1/ 4)
-    - haproxy
-```
-
-> **⚠️ Piège — ni Python, ni `sudo` dans un conteneur minimal.** Deux réflexes « VM » qui cassent
-> ici :
-> - **`become: true`** => `module_stderr: "/bin/sh: 1: sudo: not found"`. Un `debian:12` nu n'a
->   **pas** de `sudo`… et on y est **déjà root**. **Correctif** => pas de `become`.
-> - **`gather_facts`** (actif par défaut) s'exécute **avant** les rôles, donc **avant**
->   `bootstrap_python` => `No python interpreters found for host 'proxy'`. **Correctif** =>
->   `gather_facts: false`, exactement comme le `bootstrap.yml` du [chapitre 1](1-FIRST-PLAYBOOK.md).
-
-> **🧪 Manip — proxy vers WordPress**
->
-> 1. **Dev** (Etape 1) → `db`, `wp`, `inventory-backends.ini`. **Ops** (Etapes 2-3) → conteneur
->    `proxy` + inventaire.
-> 2. `ansible-playbook -i inventory.ini site.yml` → HAProxy installé + configuré.
-> 3. Vérifiez que le proxy **route vers WordPress** :
->    ```bash
->    curl -s -o /dev/null -w '%{http_code} -> %{redirect_url}\n' http://localhost:8088
->    ```
->    ```text
->    302 -> http://127.0.0.1:8088/wp-admin/install.php
->    ```
->    La **redirection vers l'installeur WordPress** prouve que le trafic a bien traversé HAProxy
->    jusqu'au backend `wp`.
->
->    > **⚠️ Si vous obtenez `500`** : ce n'est **pas** HAProxy (il a bien relayé), c'est
->    > **WordPress qui ne joint pas sa base**. Sans `WORDPRESS_DB_USER`/`WORDPRESS_DB_PASSWORD`,
->    > WP tente `root` **sans mot de passe** alors que MySQL exige `rootpw`. Les fichiers fournis
->    > passent déjà ces variables ; vérifiez avec `docker exec wp env | grep WORDPRESS_DB`.
-> 4. Changez `haproxy_listen_port` ou une règle → rejouez → le **handler recharge** HAProxy
->    (et `validate` bloquerait une config invalide). Rejouez sans rien changer → `changed=0`.
->
-> *Observation : un point d'entrée unique, configuré **par du code**, devant l'application — et
-> rechargé seulement quand sa config bouge.*
->
-> **Nettoyage** — dans l'ordre **infra puis app**, avec la commande de la voie choisie :
-> - voie Terraform => `terraform destroy -auto-approve` dans `infra/tf`, puis dans `app/tf` ;
-> - voie Ansible => `docker compose down` dans `infra/ansible`, puis `docker compose down -v`
->   dans `app/ansible` (c'est `app/` qui possède le réseau `wpnet`).
-
----
-
-## Aller plus loin (mentions)
-
-- **Load-balancing** : ajoutez des `server wp2 …`, `server wp3 …` dans le backend +
-  `balance roundrobin` → HAProxy répartit la charge. L'**inventaire des backends** (publié par
-  dev) peut **lister plusieurs hôtes** → on boucle dessus dans le template :
-  ```jinja
-  backend wordpress_app
-      balance roundrobin
-  {% for h in groups['wordpress'] %}
-      server {{ h }} {{ h }}:80 check
-  {% endfor %}
-  ```
-- **Routage par domaine/chemin** (ACL) : `acl is_blog hdr(host) -i blog.example.com` +
-  `use_backend …` → plusieurs apps derrière un seul HAProxy.
-- **TLS** : terminer le HTTPS sur le `frontend` (`bind *:443 ssl crt …`).
-
-> Ces variantes ne changent pas l'approche : **une config templatée + un handler**. C'est tout
-> l'intérêt — l'ops devient du **code versionné, testable, rejouable**.
-
----
-
-## ✅ Bonus — le même résultat avec un rôle Galaxy (`requirements.yml`)
-
-Jusqu'ici on a **écrit** notre rôle : c'était l'objectif (template Jinja2, `validate:`, handler).
-Mais en vrai, **on n'écrit pas tout soi-même** : le rôle
-[`geerlingguy.haproxy`](https://github.com/geerlingguy/ansible-role-haproxy) fait déjà le travail.
-C'est l'occasion de rendre **concret** le `requirements.yml` vu au [chapitre 4](4-ROLES.md).
-
-On déclare la dépendance, **en épinglant la version** :
-
-```yaml
-# infra/ansible-galaxy/requirements.yml
-collections:
-  - name: community.docker
-roles:
-  - name: geerlingguy.haproxy
-    version: 1.3.2            # reproductible : on epingle
-```
-
-```bash
-cd solutions/6-haproxy/infra/ansible-galaxy
-ansible-galaxy install -r requirements.yml -p ./roles
-```
-
-Et on **ne configure plus que des variables** — aucun template à écrire :
-
-```yaml
-# infra/ansible-galaxy/site.yml (extrait)
-- name: Configurer HAProxy avec le rôle Galaxy
-  hosts: proxy
-  gather_facts: true          # indispensable : le rôle teste ansible_os_family
-  vars:
-    haproxy_frontend_name: http_in
-    haproxy_frontend_port: 80
-    haproxy_backend_name: wordpress_app
-    haproxy_backend_balance_method: roundrobin
-    haproxy_backend_servers:
-      - name: wp1
-        address: wp:80
-  roles:
-    - geerlingguy.haproxy
-```
-
-> **⚠️ Piège — le rôle Galaxy exige les facts.** Il teste `ansible_os_family`, mais nos conteneurs
-> minimaux n'ont **pas** Python, donc pas de facts (cf. le piège plus haut). Si vous gardez
-> `gather_facts: false`, vous obtenez :
-> ```text
-> Error while evaluating conditional: 'ansible_os_family' is undefined
-> ```
-> **Correctif** => **deux plays** : le premier amorce Python **sans** facts
-> (`bootstrap_python`), le second active `gather_facts: true` pour le rôle Galaxy.
-
-| | Rôle **maison** | Rôle **Galaxy** |
-|---|---|---|
-| Ce qu'on écrit | le template `haproxy.cfg.j2` + les tâches | **uniquement des variables** |
-| Ce qu'on apprend | template, `validate:`, handler | **consommer** et **versionner** une dépendance |
-| Maîtrise de la config | **totale** (c'est votre fichier) | limitée aux variables exposées par le rôle |
-| Maintenance | à votre charge | suivie par l'auteur (mais **vous subissez** ses choix) |
-| *Health check* | à ajouter soi-même | `option httpchk` **fourni** |
-
-> **Que choisir ?** Ni l'un ni l'autre systématiquement. Un rôle Galaxy éprouvé fait gagner du
-> temps sur un besoin **standard** ; un rôle maison reste préférable dès que la config est
-> **spécifique** ou que vous devez en **maîtriser chaque ligne**. Ici, le rôle maison **reste le
-> fil rouge** du chapitre — c'est lui qui vous apprend le métier.
-
-> 💡 **Tester** — avec la stack `app/` démarrée et le conteneur `proxy` provisionné :
+> 💡 **Tester** — depuis `infra/projects/haproxy/` :
 > ```bash
-> cp ../ansible/inventory.ini .
+> docker compose up -d
 > ansible-playbook -i inventory.ini site.yml
-> curl -s -o /dev/null -w '%{http_code} -> %{redirect_url}\n' http://localhost:8088
+> curl -sL -o /dev/null -w '%{http_code}\n' http://localhost:8088/app1
 > ```
 > ```text
-> 302 -> http://127.0.0.1:8088/wp-admin/install.php
+> 200
 > ```
-
-> **À retenir.** On **versionne `requirements.yml`**, **jamais** les rôles téléchargés (d'où le
-> `.gitignore` sur `roles/geerlingguy.*`). En CI, `ansible-galaxy install -r requirements.yml`
-> précède `ansible-playbook` — comme un `npm install` ou un `terraform init`.
 
 ---
 
-## Recap
+## 🎉 Challenge final — ajouter `app2` sans toucher au proxy
 
-- **Scénario réaliste, deux repos** : **dev livre** l'app (repo **`app/`** + l'inventaire des
-  backends) ; **ops possède son edge** (repo **`infra/`** : il déploie HAProxy et le configure
-  depuis l'inventaire récupéré). Des **deux côtés**, le provisioning est au choix **`tf/`** ou
-  **`ansible/`** — c'est le **contrat** (l'inventaire), pas l'outil, qui compte.
-- **HAProxy** = reverse proxy : `frontend` (**ingress** : écoute + routage) → `backend`
-  (**les serveurs** cibles).
-- Config **générée par Ansible** (template Jinja2) + **`validate:`** (refuse une config cassée)
-  + **handler** (reload uniquement sur changement) — le tout dans un **rôle**.
-- Cas de base : **un backend** (WordPress). Load-balancing = **plusieurs `server` + `balance`**.
-- **Pattern universel** : configurer un équipement d'entrée (proxy, LB, **pare-feu**, switch…)
-  depuis l'inventaire — seuls **template** et **connection plugin** changent.
-- **Bonus** : le même résultat via **`geerlingguy.haproxy`** (Galaxy) => `requirements.yml`
-  **versionné et épinglé**, rôles téléchargés **jamais commités**.
+C'est l'aboutissement : une **nouvelle équipe dev** arrive avec son application. Combien de
+fichiers l'ops doit-il modifier ? **Un seul, d'une ligne.**
+
+1. **DEV** — démarrez l'application :
+   ```bash
+   cd apps/app2 && docker compose up -d
+   ```
+2. **OPS** — déclarez-la dans l'**annuaire** (`infra/projects/haproxy/inventory.ini`) :
+   ```ini
+   [apps]
+   app1 ansible_connection=community.docker.docker
+   app2 ansible_connection=community.docker.docker    # <- LA seule modification
+   ```
+3. **OPS** — rejouez :
+   ```bash
+   cd infra/projects/haproxy && ansible-playbook -i inventory.ini site.yml
+   ```
+
+> 💡 **Vérifier**
+> ```bash
+> curl -sL http://localhost:8088/app2         # -> Server name: <hostname du conteneur>
+> curl -sL http://localhost:8088/app2/hello   # -> URI: /hello  (préfixe retiré)
+> ```
+
+- [ ] `/app1` répond (WordPress, déployé par le **rôle des ops**).
+- [ ] `/app2` répond — **sans** avoir modifié le template ni le rôle `haproxy`.
+- [ ] Vous savez dire **quel artefact** circule dans **quel sens**.
+
+> **⚠️ Si `/app2` ne répond pas tout de suite** : le `check` considère un backend qui vient de
+> démarrer comme **DOWN**. Patientez quelques secondes — c'est le *health check* qui fait son
+> travail, pas une erreur de config.
+
+## ✅ Bonus
+
+- **Un port différent** : exposez une app qui n'écoute pas sur 80 (surchargez `haproxy_backend_port`,
+  ou définissez `app_port` sur l'hôte dans l'inventaire).
+- **Load-balancing** : ce chapitre fait du **routage** (N apps **différentes**). Pour répartir la
+  charge, il faut **N instances identiques** de la *même* app dans un backend => plusieurs
+  `server` + `balance roundrobin`. Ne confondez pas les deux.
+- **Rôle Galaxy** : remplacez le rôle `haproxy` maison par
+  [`geerlingguy.haproxy`](https://github.com/geerlingguy/ansible-role-haproxy). Attention, il
+  **exige les facts** (`ansible_os_family`) => il faut **deux plays** (bootstrap Python sans
+  facts, puis le rôle). Vous y gagnez un rôle maintenu, vous y perdez la maîtrise du template.
+
+## Récap
+
+- **Deux artefacts circulent** : les ops **publient des rôles** (versionnés), les devs
+  **déclarent leurs applications**. C'est ça, une stratégie Ansible d'équipe.
+- Un rôle **publiable** = un rôle avec **`meta/main.yml`** + une **version** ; on versionne
+  **`requirements.yml`**, pas les rôles téléchargés.
+- L'**annuaire** (le groupe `[apps]`) est la **source de vérité** du routage : la route **dérive
+  du nom de l'hôte**.
+- Le template **boucle** sur l'annuaire => ajouter une app = **une ligne**, **zéro** modification
+  du proxy. Le tout sécurisé par **`validate:`** et rejoué par un **handler**.
+- **Pattern universel** : ce qui vaut pour HAProxy vaut pour un **LB**, un **pare-feu**, un
+  **switch** — seuls le **template** et le *connection plugin* changent.
 
 ➡️ **[7 — GitOps « pull » : réconciliation continue (AWX / Semaphore)](7-GITOPS-AWX.md)** :
 prendre du recul sur le **push** (notre lab) vs le **pull** GitOps, et lancer un contrôleur Ansible.

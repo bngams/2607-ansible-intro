@@ -1,0 +1,10 @@
+---
+- name: Python est-il present ?
+  ansible.builtin.raw: command -v python3
+  register: pycheck
+  changed_when: false
+  failed_when: false
+
+- name: Installer Python si absent
+  ansible.builtin.raw: apt-get update -y && apt-get install -y python3
+  when: pycheck.rc != 0
