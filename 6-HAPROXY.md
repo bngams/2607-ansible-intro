@@ -309,8 +309,10 @@ le réseau `wpnet`, donc il joint `wp` par son nom (lu dans l'inventaire).
 > *Observation : un point d'entrée unique, configuré **par du code**, devant l'application — et
 > rechargé seulement quand sa config bouge.*
 >
-> Nettoyage : `terraform destroy -auto-approve` dans **`infra/tf`** puis dans **`app/tf`**
-> (ou `docker compose down -v` dans `app/ansible` si vous avez pris la voie Ansible).
+> **Nettoyage** — dans l'ordre **infra puis app**, avec la commande de la voie choisie :
+> - voie Terraform => `terraform destroy -auto-approve` dans `infra/tf`, puis dans `app/tf` ;
+> - voie Ansible => `docker compose down` dans `infra/ansible`, puis `docker compose down -v`
+>   dans `app/ansible` (c'est `app/` qui possède le réseau `wpnet`).
 
 ---
 
@@ -335,11 +337,92 @@ le réseau `wpnet`, donc il joint `wp` par son nom (lu dans l'inventaire).
 
 ---
 
+## ✅ Bonus — le même résultat avec un rôle Galaxy (`requirements.yml`)
+
+Jusqu'ici on a **écrit** notre rôle : c'était l'objectif (template Jinja2, `validate:`, handler).
+Mais en vrai, **on n'écrit pas tout soi-même** : le rôle
+[`geerlingguy.haproxy`](https://github.com/geerlingguy/ansible-role-haproxy) fait déjà le travail.
+C'est l'occasion de rendre **concret** le `requirements.yml` vu au [chapitre 4](4-ROLES.md).
+
+On déclare la dépendance, **en épinglant la version** :
+
+```yaml
+# infra/ansible-galaxy/requirements.yml
+collections:
+  - name: community.docker
+roles:
+  - name: geerlingguy.haproxy
+    version: 1.3.2            # reproductible : on epingle
+```
+
+```bash
+cd solutions/6-haproxy/infra/ansible-galaxy
+ansible-galaxy install -r requirements.yml -p ./roles
+```
+
+Et on **ne configure plus que des variables** — aucun template à écrire :
+
+```yaml
+# infra/ansible-galaxy/site.yml (extrait)
+- name: Configurer HAProxy avec le rôle Galaxy
+  hosts: proxy
+  gather_facts: true          # indispensable : le rôle teste ansible_os_family
+  vars:
+    haproxy_frontend_name: http_in
+    haproxy_frontend_port: 80
+    haproxy_backend_name: wordpress_app
+    haproxy_backend_balance_method: roundrobin
+    haproxy_backend_servers:
+      - name: wp1
+        address: wp:80
+  roles:
+    - geerlingguy.haproxy
+```
+
+> **⚠️ Piège — le rôle Galaxy exige les facts.** Il teste `ansible_os_family`, mais nos conteneurs
+> minimaux n'ont **pas** Python, donc pas de facts (cf. le piège plus haut). Si vous gardez
+> `gather_facts: false`, vous obtenez :
+> ```text
+> Error while evaluating conditional: 'ansible_os_family' is undefined
+> ```
+> **Correctif** => **deux plays** : le premier amorce Python **sans** facts
+> (`bootstrap_python`), le second active `gather_facts: true` pour le rôle Galaxy.
+
+| | Rôle **maison** | Rôle **Galaxy** |
+|---|---|---|
+| Ce qu'on écrit | le template `haproxy.cfg.j2` + les tâches | **uniquement des variables** |
+| Ce qu'on apprend | template, `validate:`, handler | **consommer** et **versionner** une dépendance |
+| Maîtrise de la config | **totale** (c'est votre fichier) | limitée aux variables exposées par le rôle |
+| Maintenance | à votre charge | suivie par l'auteur (mais **vous subissez** ses choix) |
+| *Health check* | à ajouter soi-même | `option httpchk` **fourni** |
+
+> **Que choisir ?** Ni l'un ni l'autre systématiquement. Un rôle Galaxy éprouvé fait gagner du
+> temps sur un besoin **standard** ; un rôle maison reste préférable dès que la config est
+> **spécifique** ou que vous devez en **maîtriser chaque ligne**. Ici, le rôle maison **reste le
+> fil rouge** du chapitre — c'est lui qui vous apprend le métier.
+
+> 💡 **Tester** — avec la stack `app/` démarrée et le conteneur `proxy` provisionné :
+> ```bash
+> cp ../ansible/inventory.ini .
+> ansible-playbook -i inventory.ini site.yml
+> curl -s -o /dev/null -w '%{http_code} -> %{redirect_url}\n' http://localhost:8088
+> ```
+> ```text
+> 302 -> http://127.0.0.1:8088/wp-admin/install.php
+> ```
+
+> **À retenir.** On **versionne `requirements.yml`**, **jamais** les rôles téléchargés (d'où le
+> `.gitignore` sur `roles/geerlingguy.*`). En CI, `ansible-galaxy install -r requirements.yml`
+> précède `ansible-playbook` — comme un `npm install` ou un `terraform init`.
+
+---
+
 ## Recap
 
-- **Scénario réaliste, deux repos** : **dev livre** l'app (repo **`app/`** — `tf/` ou `ansible/` au
-  choix — + l'inventaire des backends) ; **ops possède son edge** (repo **`infra/`** : TF déploie
-  HAProxy, Ansible le configure depuis l'inventaire récupéré).
+- **Scénario réaliste, deux repos** : **dev livre** l'app (repo **`app/`** + l'inventaire des
+  backends) ; **ops possède son edge** (repo **`infra/`** : il déploie HAProxy et le configure
+  depuis l'inventaire récupéré). Des **deux côtés**, le provisioning est au choix **`tf/`** ou
+  **`ansible/`** — c'est le **contrat** (l'inventaire), pas l'outil, qui compte.
 - **HAProxy** = reverse proxy : `frontend` (**ingress** : écoute + routage) → `backend`
   (**les serveurs** cibles).
 - Config **générée par Ansible** (template Jinja2) + **`validate:`** (refuse une config cassée)
@@ -347,6 +430,8 @@ le réseau `wpnet`, donc il joint `wp` par son nom (lu dans l'inventaire).
 - Cas de base : **un backend** (WordPress). Load-balancing = **plusieurs `server` + `balance`**.
 - **Pattern universel** : configurer un équipement d'entrée (proxy, LB, **pare-feu**, switch…)
   depuis l'inventaire — seuls **template** et **connection plugin** changent.
+- **Bonus** : le même résultat via **`geerlingguy.haproxy`** (Galaxy) => `requirements.yml`
+  **versionné et épinglé**, rôles téléchargés **jamais commités**.
 
 ➡️ **[7 — GitOps « pull » : réconciliation continue (AWX / Semaphore)](7-GITOPS-AWX.md)** :
 prendre du recul sur le **push** (notre lab) vs le **pull** GitOps, et lancer un contrôleur Ansible.
