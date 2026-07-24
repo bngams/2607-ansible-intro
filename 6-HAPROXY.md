@@ -75,110 +75,11 @@ flowchart LR
 
 ---
 
-## Anatomie d'une config HAProxy
-
-Deux blocs essentiels — c'est le vocabulaire **ops** que la config exprime :
-
-| Bloc | Rôle | Ce qu'on y règle |
-|---|---|---|
-| **`frontend`** *(ingress)* | **par où ça entre** : l'écoute | port/IP d'écoute, **ACL** (règles de routage par domaine/chemin), quel backend cibler |
-| **`backend`** *(vers les apps)* | **où ça part** : les serveurs cibles | la liste des **serveurs** (nos conteneurs), l'algo de **répartition**, les *health checks* |
-
-```
-client ──▶ frontend (écoute :80, ACL)  ──▶ backend (serveurs)  ──▶ conteneur WordPress
-```
-
-> **Et le load-balancing ?** Il suffit de mettre **plusieurs `server`** dans le backend +
-> `balance roundrobin` → HAProxy répartit. Ici on fait **un seul backend** (une instance WP).
-
----
-
-## Le template `haproxy.cfg.j2`
-
-On **génère** un template de config HAProxy avec Ansible (Jinja2) et des **variables**, pour le
-rendre **« paramétrable »** :
-
-```jinja
-global
-    daemon
-
-defaults
-    mode http
-    timeout connect 5s
-    timeout client 30s
-    timeout server 30s
-
-# --- INGRESS : par où le trafic entre ---
-frontend http_in
-    bind *:{{ haproxy_listen_port }}
-    default_backend wordpress_app
-
-# --- BACKEND : vers l'application ---
-backend wordpress_app
-    server wp1 {{ wp_backend_host }}:{{ wp_backend_port }} check
-```
-
-> `{{ wp_backend_host }}` = le **hostname du conteneur WordPress** (nom résolu sur le réseau
-> Docker).
-> `check` = active un *health check* basique.
-> Tout est **paramétrable** via les variables. Par exemple, on peut changer le port d'écoute ou
-> la cible sans réécrire la config.
-
----
-
-## Le rôle `haproxy`
-
-On applique les bonnes pratiques de [4](4-ROLES.md), en créant un **rôle** propre à
-l'installation et la configuration de HAProxy. *(On peut repartir de `ansible-galaxy role init
-roles/haproxy` pour générer l'arborescence.)*
-
-`roles/haproxy/defaults/main.yml` :
-
-```yaml
-haproxy_listen_port: 80
-wp_backend_host: wp        # le conteneur WordPress (5)
-wp_backend_port: 80
-```
-
-`roles/haproxy/tasks/main.yml` :
-
-```yaml
-- name: Installer HAProxy
-  ansible.builtin.apt:
-    name: haproxy
-    state: present
-    update_cache: true
-
-- name: Déployer la configuration (template)
-  ansible.builtin.template:
-    src: haproxy.cfg.j2
-    dest: /etc/haproxy/haproxy.cfg
-    mode: "0644"
-    validate: haproxy -c -f %s      # /!\ refuse une config invalide AVANT de l'écrire
-  notify: Recharger HAProxy
-
-- name: Démarrer et activer HAProxy
-  ansible.builtin.service:
-    name: haproxy
-    state: started
-    enabled: true
-```
-
-`roles/haproxy/handlers/main.yml` :
-
-```yaml
-- name: Recharger HAProxy
-  ansible.builtin.service:
-    name: haproxy
-    state: reloaded
-```
-
-> **`validate:`** est un réflexe ops : Ansible lance `haproxy -c -f` sur le fichier rendu **avant**
-> de le déployer → une config cassée **n'atteint jamais** le serveur. Inestimable en prod.
-
----
-
 ## Les deux projets (fournis clé en main)
+
+Commençons par **monter le décor** : les deux projets sont fournis prêts à l'emploi, on les lance
+pour obtenir des **cibles réelles** (les conteneurs) et un **inventaire**. On écrira la
+configuration HAProxy **juste après**, une fois qu'on aura quelque chose à configurer.
 
 Tout est dans `solutions/6-haproxy/` :
 
@@ -260,7 +161,119 @@ printf '\n[proxy]\nproxy ansible_connection=community.docker.docker\n' >> invent
 
 ---
 
+## Anatomie d'une config HAProxy
+
+Le décor est planté : `wp` et `db` tournent, votre conteneur `proxy` est déployé, et votre
+inventaire liste les trois. **Il ne manque plus qu'une chose** : la **configuration** à déposer
+sur ce proxy. Avant de la générer avec Ansible, regardons **ce qu'on doit produire**.
+
+Deux blocs essentiels — c'est le vocabulaire **ops** que la config exprime :
+
+| Bloc | Rôle | Ce qu'on y règle |
+|---|---|---|
+| **`frontend`** *(ingress)* | **par où ça entre** : l'écoute | port/IP d'écoute, **ACL** (règles de routage par domaine/chemin), quel backend cibler |
+| **`backend`** *(vers les apps)* | **où ça part** : les serveurs cibles | la liste des **serveurs** (nos conteneurs), l'algo de **répartition**, les *health checks* |
+
+```
+client ──▶ frontend (écoute :80, ACL)  ──▶ backend (serveurs)  ──▶ conteneur WordPress
+```
+
+> **Et le load-balancing ?** Il suffit de mettre **plusieurs `server`** dans le backend +
+> `balance roundrobin` → HAProxy répartit. Ici on fait **un seul backend** (une instance WP).
+
+---
+
+## Le template `haproxy.cfg.j2`
+
+On sait **quoi** produire (un `frontend` + un `backend`). Reste le **comment** : plutôt que
+d'écrire ce fichier à la main sur le serveur, on le **génère** avec Ansible (Jinja2) et des
+**variables**, pour le rendre **« paramétrable »** :
+
+```jinja
+global
+    daemon
+
+defaults
+    mode http
+    timeout connect 5s
+    timeout client 30s
+    timeout server 30s
+
+# --- INGRESS : par où le trafic entre ---
+frontend http_in
+    bind *:{{ haproxy_listen_port }}
+    default_backend wordpress_app
+
+# --- BACKEND : vers l'application ---
+backend wordpress_app
+    server wp1 {{ wp_backend_host }}:{{ wp_backend_port }} check
+```
+
+> `{{ wp_backend_host }}` = le **hostname du conteneur WordPress** (nom résolu sur le réseau
+> Docker).
+> `check` = active un *health check* basique.
+> Tout est **paramétrable** via les variables. Par exemple, on peut changer le port d'écoute ou
+> la cible sans réécrire la config.
+
+---
+
+## Le rôle `haproxy`
+
+On applique les bonnes pratiques de [4](4-ROLES.md), en créant un **rôle** propre à
+l'installation et la configuration de HAProxy. *(On peut repartir de `ansible-galaxy role init
+roles/haproxy` pour générer l'arborescence.)*
+
+`roles/haproxy/defaults/main.yml` :
+
+```yaml
+haproxy_listen_port: 80
+wp_backend_host: wp        # le conteneur WordPress (5)
+wp_backend_port: 80
+```
+
+`roles/haproxy/tasks/main.yml` :
+
+```yaml
+- name: Installer HAProxy
+  ansible.builtin.apt:
+    name: haproxy
+    state: present
+    update_cache: true
+
+- name: Déployer la configuration (template)
+  ansible.builtin.template:
+    src: haproxy.cfg.j2
+    dest: /etc/haproxy/haproxy.cfg
+    mode: "0644"
+    validate: haproxy -c -f %s      # /!\ refuse une config invalide AVANT de l'écrire
+  notify: Recharger HAProxy
+
+- name: Démarrer et activer HAProxy
+  ansible.builtin.service:
+    name: haproxy
+    state: started
+    enabled: true
+```
+
+`roles/haproxy/handlers/main.yml` :
+
+```yaml
+- name: Recharger HAProxy
+  ansible.builtin.service:
+    name: haproxy
+    state: reloaded
+```
+
+> **`validate:`** est un réflexe ops : Ansible lance `haproxy -c -f` sur le fichier rendu **avant**
+> de le déployer → une config cassée **n'atteint jamais** le serveur. Inestimable en prod.
+
+---
+
 ## Le playbook (OPS)
+
+Toutes les pièces sont prêtes : les **cibles** (étapes 1-3), le **template** et le **rôle**. Le
+playbook n'a plus qu'à les **assembler** — et, comme au [chapitre 4](4-ROLES.md), il se réduit à
+une liste de `roles:`.
 
 Le `proxy` est un `debian:12` **minimal** → on **réutilise le rôle `bootstrap_python`** de
 [1](1-FIRST-PLAYBOOK.md)/[4](4-ROLES.md) avant le rôle `haproxy`. Le conteneur est sur
