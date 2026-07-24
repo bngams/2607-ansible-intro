@@ -229,7 +229,7 @@ exactement le modèle **AWX** : *Project => Template => Schedule*.
 > git -c user.email=dev@example.com -c user.name=demo commit -qm "playbook de reconciliation"
 > ```
 
-Le `demo-repo/` fournit un playbook volontairement trivial — il **prouve** que le contrôleur tire
+Le [`demo-repo/`](solutions/7-gitops-awx) fournit un playbook volontairement trivial — il **prouve** que le contrôleur tire
 le repo et rejoue le playbook :
 
 ```yaml
